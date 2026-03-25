@@ -25,8 +25,8 @@ curl -sSL https://raw.githubusercontent.com/JernejMrvar/tm-ai-skill/main/install
 ```
 
 This will:
-1. Download the skill doc to `~/.claude/tm-api.md`
-2. Register it in your global `~/.claude/CLAUDE.md`
+1. Install the skill for **Claude Code** → `~/.claude/tm-api.md` (registered in `~/.claude/CLAUDE.md`)
+2. Install the skill for **Cursor** → `~/.cursor/rules/tm-api.md`
 3. Create a `~/.tm-config` template for your credentials
 
 ---
