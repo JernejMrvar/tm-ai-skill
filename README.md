@@ -37,7 +37,7 @@ Open `~/.tm-config` and fill in your values:
 
 ```bash
 TM_TOKEN=tm_your_token_here
-TM_BASE_URL=https://your-app.vercel.app
+TM_BASE_URL=https://test-management-project.vercel.app
 ```
 
 **To get a token:** open your TestManagement project → **Project Settings → API Tokens → New Token**. Copy the `tm_...` value — it's shown only once.

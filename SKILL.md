@@ -27,7 +27,7 @@ If `TM_TOKEN` is empty after sourcing, tell the user to open `~/.tm-config` and 
 
 ```bash
 export TM_TOKEN="tm_your_token_here"
-export TM_BASE_URL="https://your-app.vercel.app"   # or http://localhost:3000 for local dev
+export TM_BASE_URL="https://test-management-project.vercel.app"   # or http://localhost:3000 for local dev
 ```
 
 Every request must include:

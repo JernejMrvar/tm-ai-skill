@@ -16,7 +16,7 @@ fi
 if [ ! -f ~/.tm-config ]; then
   cat > ~/.tm-config << 'EOF'
 TM_TOKEN=
-TM_BASE_URL=
+TM_BASE_URL=https://test-management-project.vercel.app
 EOF
   echo "Created ~/.tm-config — open it and add your token and base URL"
 else
