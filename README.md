@@ -14,36 +14,49 @@ Point your AI tool at `SKILL.md` and it can:
 
 All actions are scoped to the project your API token belongs to and are recorded in the Audit Log.
 
-## Usage
+---
 
-### 1. Get an API token
+## Install
 
-In your TestManagement project: **Project Settings → API Tokens → New Token**
-
-Copy the `tm_...` token — it's shown only once.
-
-### 2. Set environment variables
+Run this once in your terminal:
 
 ```bash
-export TM_TOKEN="tm_your_token_here"
-export TM_BASE_URL="https://your-app.vercel.app"
+curl -sSL https://raw.githubusercontent.com/JernejMrvar/tm-ai-skill/main/install.sh | bash
 ```
 
-### 3. Register the skill with your AI tool
+This will:
+1. Download the skill doc to `~/.claude/tm-api.md`
+2. Register it in your global `~/.claude/CLAUDE.md`
+3. Create a `~/.tm-config` template for your credentials
 
-**Cursor / Claude Code** — add to your `CLAUDE.md`:
+---
 
-```markdown
-| TestManagement API | [SKILL.md](path/to/tm-ai-skill/SKILL.md) | Bearer token, test cases, test runs |
+## Configure
+
+Open `~/.tm-config` and fill in your values:
+
+```bash
+TM_TOKEN=tm_your_token_here
+TM_BASE_URL=https://your-app.vercel.app
 ```
 
-Then ask naturally:
+**To get a token:** open your TestManagement project → **Project Settings → API Tokens → New Token**. Copy the `tm_...` value — it's shown only once.
+
+---
+
+## Use
+
+Restart Cursor or Claude Code, then just ask:
 
 > "List all test cases in the Login folder"
 
 > "Create a test case called 'Reset password with invalid email' in the Auth folder, HIGH priority"
 
 > "Create a test run called 'Regression — March sprint' for staging, then mark TC-42 as PASSED"
+
+The AI will source your config automatically before making any API calls.
+
+---
 
 ## Skill reference
 

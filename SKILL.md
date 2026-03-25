@@ -2,6 +2,18 @@
 
 Use this skill to manage test cases and test runs in a TestManagement project directly from your AI tool — no browser needed.
 
+## Before making any API call
+
+Run the following to load credentials, then check `TM_TOKEN` is set:
+
+```bash
+source ~/.tm-config 2>/dev/null
+```
+
+If `TM_TOKEN` is empty after sourcing, tell the user to open `~/.tm-config` and add their token and base URL, then try again.
+
+---
+
 ## Setup
 
 ### 1. Generate an API token
