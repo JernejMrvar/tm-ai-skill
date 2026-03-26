@@ -27,7 +27,7 @@ If `TM_TOKEN` is empty after sourcing, tell the user to open `~/.tm-config` and 
 
 ```bash
 export TM_TOKEN="tm_your_token_here"
-export TM_BASE_URL="https://test-management-project.vercel.app"   # or http://localhost:3000 for local dev
+export TM_BASE_URL="https://your-app.vercel.app"   # or http://localhost:3000 for local dev
 ```
 
 Every request must include:
@@ -65,6 +65,37 @@ Response shape: `{ "folders": [ { "id", "name", "parentId", "position", "testCas
 
 ---
 
+## Create folder
+
+`POST /api/v1/folders` — JSON body.
+
+| Field | Notes |
+|-------|-------|
+| `name` | required |
+| `parentId` | optional int; must belong to the project |
+
+```bash
+curl -sS -X POST -H "Authorization: Bearer $TM_TOKEN" -H "Content-Type: application/json" \
+  -d '{"name":"Auth","parentId":null}' \
+  "$TM_BASE_URL/api/v1/folders"
+```
+
+---
+
+## List tags
+
+`GET /api/v1/tags`
+
+Returns all tags in the project ordered by name.
+
+```bash
+curl -sS -H "Authorization: Bearer $TM_TOKEN" "$TM_BASE_URL/api/v1/tags"
+```
+
+Response shape: `{ "tags": [ { "id", "name" } ] }`
+
+---
+
 ## List test cases
 
 `GET /api/v1/test-cases`
@@ -80,6 +111,18 @@ Each item includes `id`, `title`, `description`, `status`, `priority`, `folderId
 ```bash
 curl -sS -H "Authorization: Bearer $TM_TOKEN" \
   "$TM_BASE_URL/api/v1/test-cases?status=ACTUAL&folderId=1"
+```
+
+---
+
+## Get test case
+
+`GET /api/v1/test-cases/{id}`
+
+Returns a single test case including `steps`, `preconditions`, `postconditions`, `folder`, and `tags`.
+
+```bash
+curl -sS -H "Authorization: Bearer $TM_TOKEN" "$TM_BASE_URL/api/v1/test-cases/42"
 ```
 
 ---
@@ -108,6 +151,30 @@ curl -sS -X POST -H "Authorization: Bearer $TM_TOKEN" -H "Content-Type: applicat
 
 ---
 
+## Update test case
+
+`PATCH /api/v1/test-cases/{id}` — JSON body, all fields optional.
+
+Same fields as create: `title`, `description`, `preconditions`, `postconditions`, `steps`, `expectedResult`, `priority`, `status`, `folderId`, `tagIds`. Only provided fields are updated.
+
+```bash
+curl -sS -X PATCH -H "Authorization: Bearer $TM_TOKEN" -H "Content-Type: application/json" \
+  -d '{"status":"DEPRECATED","priority":"LOW"}' \
+  "$TM_BASE_URL/api/v1/test-cases/42"
+```
+
+---
+
+## Delete test case
+
+`DELETE /api/v1/test-cases/{id}`
+
+```bash
+curl -sS -X DELETE -H "Authorization: Bearer $TM_TOKEN" "$TM_BASE_URL/api/v1/test-cases/42"
+```
+
+---
+
 ## List test runs
 
 `GET /api/v1/test-runs`
@@ -118,6 +185,18 @@ Each run includes `caseCount`, `creator.name`, `environment`, `source`, `startDa
 
 ```bash
 curl -sS -H "Authorization: Bearer $TM_TOKEN" "$TM_BASE_URL/api/v1/test-runs?status=IN_PROGRESS"
+```
+
+---
+
+## Get test run
+
+`GET /api/v1/test-runs/{id}`
+
+Returns a single run with `caseCount`, `creator.name`, `environment`, etc.
+
+```bash
+curl -sS -H "Authorization: Bearer $TM_TOKEN" "$TM_BASE_URL/api/v1/test-runs/10"
 ```
 
 ---
@@ -134,6 +213,16 @@ Environment is normalized against project environments when possible.
 curl -sS -X POST -H "Authorization: Bearer $TM_TOKEN" -H "Content-Type: application/json" \
   -d '{"name":"Nightly","source":"ci","environment":"staging"}' \
   "$TM_BASE_URL/api/v1/test-runs"
+```
+
+---
+
+## Delete test run
+
+`DELETE /api/v1/test-runs/{id}`
+
+```bash
+curl -sS -X DELETE -H "Authorization: Bearer $TM_TOKEN" "$TM_BASE_URL/api/v1/test-runs/10"
 ```
 
 ---
