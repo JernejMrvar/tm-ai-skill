@@ -6,9 +6,12 @@ An AI skill for [TestManagement](https://github.com/JernejMrvar) that lets you m
 
 Point your AI tool at `SKILL.md` and it can:
 
-- List and browse folders and test cases
-- Create test cases with steps, priority, tags, and folder placement
-- Create test runs and report results (pass/fail/blocked/etc.)
+- List, create, and browse folders
+- List tags
+- List, get, create, update, and delete test cases (with steps, priority, tags, and folder placement)
+- List, get, create, and delete test runs
+- Add and remove individual cases from a test run
+- Report results in batch (pass/fail/blocked/skipped/flaky)
 - Add comments and screenshots to individual case results
 - Complete or cancel test runs
 
