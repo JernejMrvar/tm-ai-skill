@@ -227,6 +227,37 @@ curl -sS -X DELETE -H "Authorization: Bearer $TM_TOKEN" "$TM_BASE_URL/api/v1/tes
 
 ---
 
+## Add cases to a test run
+
+`POST /api/v1/test-runs/{runId}/cases`
+
+Body: `{ "testCaseIds": [1, 2, 3] }` — use IDs from `GET /api/v1/test-cases`. Already-present cases are skipped.
+
+Response: `{ "added": 2, "skipped": 1, "cases": [ { "testRunCaseId", "testCaseId" } ] }`
+
+Use `testRunCaseId` when removing a case or posting a comment.
+
+```bash
+curl -sS -X POST -H "Authorization: Bearer $TM_TOKEN" -H "Content-Type: application/json" \
+  -d '{"testCaseIds":[10,11,12]}' \
+  "$TM_BASE_URL/api/v1/test-runs/5/cases"
+```
+
+---
+
+## Remove case from a test run
+
+`DELETE /api/v1/test-runs/{runId}/cases/{testRunCaseId}`
+
+**Note:** `{testRunCaseId}` is the **TestRunCase** row id (from the add-cases response or `GET /api/v1/test-runs/{id}`), not the library `testCaseId`.
+
+```bash
+curl -sS -X DELETE -H "Authorization: Bearer $TM_TOKEN" \
+  "$TM_BASE_URL/api/v1/test-runs/5/cases/99"
+```
+
+---
+
 ## Report results (batch)
 
 `POST /api/v1/test-runs/{runId}/results`
