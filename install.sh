@@ -24,7 +24,7 @@ echo "✓ Cursor: skill saved to ~/.cursor/rules/tm-api.md"
 if [ ! -f ~/.tm-config ]; then
   cat > ~/.tm-config << 'EOF'
 TM_TOKEN=
-TM_BASE_URL=https://test-management-project.vercel.app
+TM_BASE_URL=
 EOF
   echo "✓ Created ~/.tm-config — open it and add your TM_TOKEN"
 else
