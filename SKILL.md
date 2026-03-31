@@ -12,6 +12,15 @@ source ~/.tm-config 2>/dev/null
 
 If `TM_TOKEN` is empty after sourcing, tell the user to open `~/.tm-config` and add their token and base URL, then try again.
 
+After sourcing, read `TM_REVIEW_MODE` to determine how write operations are handled:
+
+| `TM_REVIEW_MODE` | Behaviour |
+|------------------|-----------|
+| `on` (default if unset) | **Always use a changeset.** Open one at the start of every write session, attach all created test cases and folders to it via `changesetId`, then submit it when done. Never create test cases without a `changesetId`. |
+| `off` | **Skip changesets.** Create test cases and folders directly with no `changesetId`. |
+
+If `TM_REVIEW_MODE` is empty or not set, treat it as `on`.
+
 ---
 
 ## Setup
@@ -28,6 +37,7 @@ If `TM_TOKEN` is empty after sourcing, tell the user to open `~/.tm-config` and 
 ```bash
 export TM_TOKEN="tm_your_token_here"
 export TM_BASE_URL="https://test-management-project.vercel.app"   # or http://localhost:3000 for local dev
+export TM_REVIEW_MODE="on"   # "on" = use changesets (default), "off" = create directly
 ```
 
 Every request must include:
@@ -368,17 +378,18 @@ Returns `{ "url", "filename", "contentType", "sizeBytes" }` — use `url` in com
 
 ## Typical flows
 
-**Create cases with review (recommended for AI-generated content)**
+**TM_REVIEW_MODE=on (default) — Create cases via changeset**
 
-1. `POST /api/v1/changesets` with `{ "name": "Login flow test cases" }` → save `changesetId`
+1. `POST /api/v1/changesets` with `{ "name": "<short description of what you're creating>" }` → save `changesetId`
 2. `GET /api/v1/folders` → pick `folderId`
 3. `POST /api/v1/test-cases` for each case, including `"changesetId": <id>` — status is automatically set to `DRAFT`
 4. `POST /api/v1/changesets/{id}/submit` to mark the batch ready for review
 5. Tell the user: "I've created N test cases for review. Open `{TM_BASE_URL}/dashboard/changesets/{id}` to approve them."
 
-To add more items later before review: `POST /api/v1/changesets/{id}/reopen`, add more test cases, then submit again.
+To add more items to an existing open changeset: ask the user for the changeset ID or list them first.
+To reopen a submitted changeset: `POST /api/v1/changesets/{id}/reopen`, then add more items and submit again.
 
-**Create cases immediately (no review)**
+**TM_REVIEW_MODE=off — Create cases immediately (no review)**
 
 1. `GET /api/v1/folders` → pick `folderId`
 2. `POST /api/v1/test-cases` for each case (no `changesetId`)
