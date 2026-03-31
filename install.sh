@@ -25,7 +25,7 @@ if [ ! -f ~/.tm-config ]; then
   cat > ~/.tm-config << 'EOF'
 TM_TOKEN=
 TM_BASE_URL=https://test-management-project.vercel.app
-TM_REVIEW_MODE=on   # "on" = use changesets (recommended), "off" = create directly
+TM_REVIEW_MODE=mandatory   # "mandatory" = always use changesets, "ask" = ask user each time, "off" = create directly
 EOF
   echo "✓ Created ~/.tm-config — open it and add your TM_TOKEN"
 else

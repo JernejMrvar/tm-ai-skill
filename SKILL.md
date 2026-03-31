@@ -16,10 +16,11 @@ After sourcing, read `TM_REVIEW_MODE` to determine how write operations are hand
 
 | `TM_REVIEW_MODE` | Behaviour |
 |------------------|-----------|
-| `on` (default if unset) | **Always use a changeset.** Open one at the start of every write session, attach all created test cases and folders to it via `changesetId`, then submit it when done. Never create test cases without a `changesetId`. |
-| `off` | **Skip changesets.** Create test cases and folders directly with no `changesetId`. |
+| `mandatory` (default if unset) | **Always use a changeset, no exceptions.** Open one at the start of every write session, attach all created test cases and folders to it via `changesetId`, and submit when done. Never create test cases without a `changesetId`, even if the user asks to skip review. |
+| `ask` | **Ask the user before each write session.** Say: "Should I put these test cases into a changeset for review, or create them directly?" Then follow their answer for the rest of that session. |
+| `off` | **Skip changesets entirely.** Create test cases and folders directly with no `changesetId`. |
 
-If `TM_REVIEW_MODE` is empty or not set, treat it as `on`.
+If `TM_REVIEW_MODE` is empty or not set, treat it as `mandatory`.
 
 ---
 
@@ -37,7 +38,7 @@ If `TM_REVIEW_MODE` is empty or not set, treat it as `on`.
 ```bash
 export TM_TOKEN="tm_your_token_here"
 export TM_BASE_URL="https://test-management-project.vercel.app"   # or http://localhost:3000 for local dev
-export TM_REVIEW_MODE="on"   # "on" = use changesets (default), "off" = create directly
+export TM_REVIEW_MODE="mandatory"   # "mandatory" = always use changesets (default), "ask" = ask user each time, "off" = create directly
 ```
 
 Every request must include:
@@ -378,7 +379,7 @@ Returns `{ "url", "filename", "contentType", "sizeBytes" }` — use `url` in com
 
 ## Typical flows
 
-**TM_REVIEW_MODE=on (default) — Create cases via changeset**
+**TM_REVIEW_MODE=mandatory (default) — Always use a changeset**
 
 1. `POST /api/v1/changesets` with `{ "name": "<short description of what you're creating>" }` → save `changesetId`
 2. `GET /api/v1/folders` → pick `folderId`
@@ -386,8 +387,17 @@ Returns `{ "url", "filename", "contentType", "sizeBytes" }` — use `url` in com
 4. `POST /api/v1/changesets/{id}/submit` to mark the batch ready for review
 5. Tell the user: "I've created N test cases for review. Open `{TM_BASE_URL}/dashboard/changesets/{id}` to approve them."
 
-To add more items to an existing open changeset: ask the user for the changeset ID or list them first.
+Do not skip this flow even if the user asks to — explain that `TM_REVIEW_MODE=mandatory` requires changeset review, and suggest they set `TM_REVIEW_MODE=ask` or `off` in `~/.tm-config` if they want to change this.
+
+To add more items to an existing open changeset: ask the user for the changeset ID.
 To reopen a submitted changeset: `POST /api/v1/changesets/{id}/reopen`, then add more items and submit again.
+
+**TM_REVIEW_MODE=ask — Ask the user before each write session**
+
+Before starting any write operations, ask: "Should I put these test cases into a changeset for review, or create them directly?"
+
+- If the user says **yes / review / changeset** → follow the `mandatory` flow above for this session
+- If the user says **no / direct / skip** → follow the `off` flow below for this session
 
 **TM_REVIEW_MODE=off — Create cases immediately (no review)**
 
