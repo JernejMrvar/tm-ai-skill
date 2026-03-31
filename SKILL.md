@@ -73,11 +73,65 @@ Response shape: `{ "folders": [ { "id", "name", "parentId", "position", "testCas
 |-------|-------|
 | `name` | required |
 | `parentId` | optional int; must belong to the project |
+| `changesetId` | optional int; attaches this folder to a changeset for review |
 
 ```bash
 curl -sS -X POST -H "Authorization: Bearer $TM_TOKEN" -H "Content-Type: application/json" \
   -d '{"name":"Auth","parentId":null}' \
   "$TM_BASE_URL/api/v1/folders"
+```
+
+---
+
+## Changesets (batch review workflow)
+
+A **changeset** groups write operations into a reviewable batch. Use this workflow when you want a human to approve test cases before they go live.
+
+### Create a changeset
+
+`POST /api/v1/changesets`
+
+| Field | Notes |
+|-------|-------|
+| `name` | optional string — describe the batch (e.g. "Login flow test cases") |
+| `description` | optional longer description |
+
+Returns `{ "id", "name", "status": "OPEN", ... }`. Save the `id` as `CHANGESET_ID`.
+
+```bash
+curl -sS -X POST -H "Authorization: Bearer $TM_TOKEN" -H "Content-Type: application/json" \
+  -d '{"name":"Login flow test cases"}' \
+  "$TM_BASE_URL/api/v1/changesets"
+```
+
+### Get changeset
+
+`GET /api/v1/changesets/{id}`
+
+```bash
+curl -sS -H "Authorization: Bearer $TM_TOKEN" "$TM_BASE_URL/api/v1/changesets/$CHANGESET_ID"
+```
+
+### Submit changeset for review
+
+`POST /api/v1/changesets/{id}/submit`
+
+Sets status from `OPEN` → `PENDING_REVIEW`. Only call when you are done adding items.
+
+```bash
+curl -sS -X POST -H "Authorization: Bearer $TM_TOKEN" \
+  "$TM_BASE_URL/api/v1/changesets/$CHANGESET_ID/submit"
+```
+
+### Reopen a submitted changeset
+
+`POST /api/v1/changesets/{id}/reopen`
+
+Sets status from `PENDING_REVIEW` → `OPEN`. Use to add more items before the human reviews.
+
+```bash
+curl -sS -X POST -H "Authorization: Bearer $TM_TOKEN" \
+  "$TM_BASE_URL/api/v1/changesets/$CHANGESET_ID/reopen"
 ```
 
 ---
@@ -138,10 +192,11 @@ curl -sS -H "Authorization: Bearer $TM_TOKEN" "$TM_BASE_URL/api/v1/test-cases/42
 | `steps` | optional array of `{ "action": string, "data"?: string, "expected"?: string }` |
 | `expectedResult` | optional string |
 | `priority` | default `MEDIUM` |
-| `status` | default `ACTUAL` |
+| `status` | default `ACTUAL`; **automatically overridden to `DRAFT` when `changesetId` is provided** |
 | `folderId` | optional; must belong to the project |
 | `tagIds` | optional int[]; tags must belong to the project |
 | `position` | optional; if omitted, appends after last case in same folder |
+| `changesetId` | optional int; attaches this test case to an OPEN changeset for human review |
 
 ```bash
 curl -sS -X POST -H "Authorization: Bearer $TM_TOKEN" -H "Content-Type: application/json" \
@@ -313,6 +368,21 @@ Returns `{ "url", "filename", "contentType", "sizeBytes" }` — use `url` in com
 
 ## Typical flows
 
+**Create cases with review (recommended for AI-generated content)**
+
+1. `POST /api/v1/changesets` with `{ "name": "Login flow test cases" }` → save `changesetId`
+2. `GET /api/v1/folders` → pick `folderId`
+3. `POST /api/v1/test-cases` for each case, including `"changesetId": <id>` — status is automatically set to `DRAFT`
+4. `POST /api/v1/changesets/{id}/submit` to mark the batch ready for review
+5. Tell the user: "I've created N test cases for review. Open `{TM_BASE_URL}/dashboard/changesets/{id}` to approve them."
+
+To add more items later before review: `POST /api/v1/changesets/{id}/reopen`, add more test cases, then submit again.
+
+**Create cases immediately (no review)**
+
+1. `GET /api/v1/folders` → pick `folderId`
+2. `POST /api/v1/test-cases` for each case (no `changesetId`)
+
 **Create cases, then a run, then report**
 
 1. `GET /api/v1/folders` → pick `folderId`
@@ -338,4 +408,6 @@ Returns `{ "url", "filename", "contentType", "sizeBytes" }` — use `url` in com
 | `401 Unauthorized` | Token is invalid or `TM_TOKEN` is not exported in the current shell |
 | `404 Folder not found` | The `folderId` doesn't belong to this token's project — ask to "list folders" first |
 | `400 Invalid tag IDs` | Tag IDs must belong to the project — check Project Settings → Tags |
+| `400 Changeset is not open` | Changeset was already submitted — call `/reopen` first, then add items and submit again |
+| `404 Changeset not found` | The `changesetId` doesn't exist or doesn't belong to this project |
 | Wrong URL constructed | Make sure `TM_BASE_URL` has no trailing slash and matches your actual deployment URL |
