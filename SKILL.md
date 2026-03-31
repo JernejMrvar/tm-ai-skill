@@ -20,7 +20,7 @@ After sourcing, read `TM_REVIEW_MODE` to determine how write operations are hand
 | `ask` | **Ask the user before each write session.** Say: "Should I put these test cases into a changeset for review, or create them directly?" Then follow their answer for the rest of that session. |
 | `off` | **Skip changesets entirely.** Create test cases and folders directly with no `changesetId`. |
 
-If `TM_REVIEW_MODE` is empty or not set, treat it as `mandatory`.
+If `TM_REVIEW_MODE` is empty or not set, treat it as `ask`.
 
 ---
 
