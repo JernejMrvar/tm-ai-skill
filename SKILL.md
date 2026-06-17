@@ -51,6 +51,47 @@ The token implicitly scopes all operations to its project — there is no `proje
 
 ---
 
+## Test case design defaults
+
+These are defaults, not rules; user instructions override them.
+
+- Prefer user-facing product-area folders, not implementation details, routes, callbacks, or token mechanics.
+- Prefer shallow folder structures and reuse existing folders.
+- Create subfolders only when there are 3+ meaningful cases or the user asks.
+- For auth, default to `Authentication > Login` and `Authentication > Register`.
+- Do not create `Auth Callback`, `Session & Access Control`, `Magic Link`, `Password Recovery`, or `Account Confirmation` folders by default; place those cases under `Login` or `Register` unless the user asks for more granularity.
+- Create compact starter suites by default: small flow 3-5 cases, medium flow 6-10 cases, and ask before creating more than 10.
+- Avoid separate cases for every token, callback, or expired-link edge case unless the user asks for detailed negative coverage.
+- Tags should be sparse:
+  - `smoke` = basic must-pass happy path or critical access check
+  - `api` = only direct endpoint/request-response tests
+  - `e2e` = only if the user asks for execution-type tagging
+  - `regression` = do not apply by default
+  - Do not tag with a folder name like `login` inside the `Login` folder
+  - Do not use `ui` unless specifically visual/layout/component behavior
+- Before creating more than 5 cases, summarize proposed folders, case count, and tags, then ask for confirmation unless the user already gave strong instructions.
+- Folder deletion may not exist in v1; if `DELETE /api/v1/folders/{id}` returns 404, report that and leave empty folders rather than using unsupported workarounds.
+
+### Auth starter suite example
+
+`Authentication > Login`:
+
+- Login succeeds with valid user credentials [`smoke`]
+- Login with invalid credentials shows an error
+- Admin login succeeds with valid admin credentials [`smoke`]
+- Forgot password request succeeds [`smoke`]
+- Reset password succeeds [`smoke`]
+- Magic link login succeeds [`smoke`]
+- Protected routes require authentication [`smoke`]
+- Logout clears the active session [`smoke`]
+
+`Authentication > Register`:
+
+- Registration succeeds with valid account details [`smoke`]
+- Account confirmation succeeds [`smoke`]
+
+---
+
 ## Enums
 
 | Domain | Values |
@@ -205,7 +246,7 @@ curl -sS -H "Authorization: Bearer $TM_TOKEN" "$TM_BASE_URL/api/v1/test-cases/42
 | `priority` | default `MEDIUM` |
 | `status` | default `ACTUAL`; **automatically overridden to `DRAFT` when `changesetId` is provided** |
 | `folderId` | optional; must belong to the project |
-| `tagIds` | optional int[]; tags must belong to the project |
+| `tagIds` | optional int[]; tags must belong to the project. Resolve existing tag IDs with `GET /api/v1/tags` before applying tag rules below. |
 | `position` | optional; if omitted, appends after last case in same folder |
 | `changesetId` | optional int; attaches this test case to an OPEN changeset for human review |
 
@@ -418,6 +459,8 @@ Before starting any write operations, ask: "Should I put these test cases into a
 
 - **Be specific about folder names** — list folders first if you need to resolve a name to an ID.
 - **Reference case IDs when you know them** — e.g. "mark TC-42 as FAILED" is faster than describing the case.
+- **Apply the `api` tag only for direct endpoint tests** — when creating test cases that call API endpoints directly, run `GET /api/v1/tags`, find the existing tag named `api`, and include its ID in `tagIds`. Do not create the tag or apply it to UI/manual tests unless the user explicitly asks.
+- **Apply the `smoke` tag to basic flows** — when creating basic happy-path or core workflow coverage, run `GET /api/v1/tags`, find the existing tag named `smoke`, and include its ID in `tagIds`. Do not create the tag if it is missing.
 - **Token is per-project** — if you work across multiple projects, generate a separate token for each and switch `TM_TOKEN` accordingly.
 
 ---
