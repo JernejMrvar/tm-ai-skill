@@ -63,7 +63,7 @@ These are defaults, not rules; user instructions override them.
 - Create compact starter suites by default: small flow 3-5 cases, medium flow 6-10 cases, and ask before creating more than 10.
 - Avoid separate cases for every token, callback, or expired-link edge case unless the user asks for detailed negative coverage.
 - Tags should be sparse:
-  - `smoke` = basic must-pass happy path or critical access check
+  - `smoke` = the smallest must-pass set proving the core app is accessible and usable; do not tag every happy path as smoke
   - `api` = only direct endpoint/request-response tests
   - `e2e` = only if the user asks for execution-type tagging
   - `regression` = do not apply by default
@@ -79,16 +79,16 @@ These are defaults, not rules; user instructions override them.
 - Login succeeds with valid user credentials [`smoke`]
 - Login with invalid credentials shows an error
 - Admin login succeeds with valid admin credentials [`smoke`]
-- Forgot password request succeeds [`smoke`]
-- Reset password succeeds [`smoke`]
-- Magic link login succeeds [`smoke`]
+- Forgot password request succeeds
+- Reset password succeeds
+- Magic link login succeeds
 - Protected routes require authentication [`smoke`]
 - Logout clears the active session [`smoke`]
 
 `Authentication > Register`:
 
 - Registration succeeds with valid account details [`smoke`]
-- Account confirmation succeeds [`smoke`]
+- Account confirmation succeeds
 
 ---
 
@@ -460,7 +460,7 @@ Before starting any write operations, ask: "Should I put these test cases into a
 - **Be specific about folder names** — list folders first if you need to resolve a name to an ID.
 - **Reference case IDs when you know them** — e.g. "mark TC-42 as FAILED" is faster than describing the case.
 - **Apply the `api` tag only for direct endpoint tests** — when creating test cases that call API endpoints directly, run `GET /api/v1/tags`, find the existing tag named `api`, and include its ID in `tagIds`. Do not create the tag or apply it to UI/manual tests unless the user explicitly asks.
-- **Apply the `smoke` tag to basic flows** — when creating basic happy-path or core workflow coverage, run `GET /api/v1/tags`, find the existing tag named `smoke`, and include its ID in `tagIds`. Do not create the tag if it is missing.
+- **Apply the `smoke` tag sparingly** — use `smoke` for the smallest must-pass set proving the core app is accessible and usable. Do not tag every happy path as `smoke`. When needed, run `GET /api/v1/tags`, find the existing tag named `smoke`, and include its ID in `tagIds`. Do not create the tag if it is missing.
 - **Token is per-project** — if you work across multiple projects, generate a separate token for each and switch `TM_TOKEN` accordingly.
 
 ---
