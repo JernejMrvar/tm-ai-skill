@@ -24,13 +24,14 @@ All actions are scoped to the project your API token belongs to and are recorded
 Run this once in your terminal:
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/JernejMrvar/tm-ai-skill/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/JernejMrvar/tm-ai-skill/main/install.sh | bash
 ```
 
 This will:
-1. Install the skill for **Claude Code** → `~/.claude/tm-api.md` (registered in `~/.claude/CLAUDE.md`)
-2. Install the skill for **Cursor** → `~/.cursor/rules/tm-api.md`
-3. Create a `~/.tm-config` template for your credentials
+1. Install the skill for **Codex** → `~/.codex/tm-api.md` (registered in `~/.codex/AGENTS.md`)
+2. Install the skill for **Claude Code** → `~/.claude/tm-api.md` (registered in `~/.claude/CLAUDE.md`)
+3. Install the skill for **Cursor** → `~/.cursor/rules/tm-api.md`
+4. Create a `~/.tm-config` template for your credentials
 
 ---
 
@@ -49,7 +50,7 @@ TM_BASE_URL=https://test-management-project.vercel.app
 
 ## Use
 
-Restart Cursor or Claude Code, then just ask:
+Restart Codex, Cursor, or Claude Code, then just ask:
 
 > "List all test cases in the Login folder"
 

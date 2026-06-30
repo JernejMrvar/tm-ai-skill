@@ -5,9 +5,19 @@ SKILL_URL="https://raw.githubusercontent.com/JernejMrvar/tm-ai-skill/main/SKILL.
 
 echo "Installing TestManagement AI skill..."
 
+# --- Codex ---
+mkdir -p ~/.codex
+curl -fsSL -o ~/.codex/tm-api.md "$SKILL_URL"
+
+if ! grep -q "tm-api.md" ~/.codex/AGENTS.md 2>/dev/null; then
+  echo "" >> ~/.codex/AGENTS.md
+  echo "@~/.codex/tm-api.md" >> ~/.codex/AGENTS.md
+fi
+echo "✓ Codex: skill registered in ~/.codex/AGENTS.md"
+
 # --- Claude Code ---
 mkdir -p ~/.claude
-curl -sSL -o ~/.claude/tm-api.md "$SKILL_URL"
+curl -fsSL -o ~/.claude/tm-api.md "$SKILL_URL"
 
 if ! grep -q "tm-api.md" ~/.claude/CLAUDE.md 2>/dev/null; then
   echo "" >> ~/.claude/CLAUDE.md
@@ -17,7 +27,7 @@ echo "✓ Claude Code: skill registered in ~/.claude/CLAUDE.md"
 
 # --- Cursor ---
 mkdir -p ~/.cursor/rules
-curl -sSL -o ~/.cursor/rules/tm-api.md "$SKILL_URL"
+curl -fsSL -o ~/.cursor/rules/tm-api.md "$SKILL_URL"
 echo "✓ Cursor: skill saved to ~/.cursor/rules/tm-api.md"
 
 # --- Config file ---
@@ -35,4 +45,4 @@ fi
 echo ""
 echo "Done. Next steps:"
 echo "  1. Open ~/.tm-config and add your TM_TOKEN"
-echo "  2. Restart Cursor or Claude Code"
+echo "  2. Restart Codex, Cursor, or Claude Code"

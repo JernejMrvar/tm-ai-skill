@@ -62,6 +62,7 @@ These are defaults, not rules; user instructions override them.
 - Do not create `Auth Callback`, `Session & Access Control`, `Magic Link`, `Password Recovery`, or `Account Confirmation` folders by default; place those cases under `Login` or `Register` unless the user asks for more granularity.
 - Create compact starter suites by default: small flow 3-5 cases, medium flow 6-10 cases, and ask before creating more than 10.
 - Avoid separate cases for every token, callback, or expired-link edge case unless the user asks for detailed negative coverage.
+- Populate step `data` whenever a step depends on concrete inputs: test accounts, fixtures, uploaded files, generated files, API endpoints, request payloads, expected visible values, error messages, or environment/setup values. Do not hide this information only in the description or preconditions; put it on the step where it is used.
 - Tags should be sparse:
   - `smoke` = the smallest must-pass set proving the core app is accessible and usable; do not tag every happy path as smoke
   - `api` = only direct endpoint/request-response tests
@@ -241,7 +242,7 @@ curl -sS -H "Authorization: Bearer $TM_TOKEN" "$TM_BASE_URL/api/v1/test-cases/42
 |-------|--------|
 | `title` | required |
 | `description`, `preconditions`, `postconditions` | optional strings |
-| `steps` | optional array of `{ "action": string, "data"?: string, "expected"?: string }` |
+| `steps` | optional array of `{ "action": string, "data"?: string, "expected"?: string }`. Use `data` for concrete fixtures/inputs/endpoints/messages and `expected` for the step-level outcome. |
 | `expectedResult` | optional string |
 | `priority` | default `MEDIUM` |
 | `status` | default `ACTUAL`; **automatically overridden to `DRAFT` when `changesetId` is provided** |
