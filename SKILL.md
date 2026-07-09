@@ -10,7 +10,7 @@ Run the following to load credentials, then check `TM_TOKEN` is set:
 source ~/.tm-config 2>/dev/null
 ```
 
-If `TM_TOKEN` is empty after sourcing, tell the user to open `~/.tm-config` and add their token and base URL, then try again.
+If `TM_TOKEN` is empty after sourcing, report that credential lookup failed. Tell the user to rerun the installer and check troubleshooting for missing OS credentials, missing `security` on macOS, Windows PowerShell/Credential Manager errors, invalid tokens, unsupported Linux/WSL, or base URL changes.
 
 After sourcing, read `TM_REVIEW_MODE` to determine how write operations are handled:
 
@@ -33,12 +33,20 @@ If `TM_REVIEW_MODE` is empty or not set, treat it as `ask`.
 3. Click **New Token**, give it a name (e.g. `ai-local`), select a "Run as" member
 4. Copy the token — it starts with `tm_` and is shown **only once**
 
-### 2. Set environment variables
+### 2. Run the installer
 
 ```bash
-export TM_TOKEN="tm_your_token_here"
+curl -fsSL https://raw.githubusercontent.com/JernejMrvar/tm-ai-skill/main/install.sh | bash
+```
+
+The installer supports macOS and Windows Git Bash. It prompts for the `tm_...` token through `/dev/tty`, stores it in the OS credential store, and writes `~/.tm-config` with non-secret exports and lookup logic. Do not manually write plaintext `TM_TOKEN` values into `~/.tm-config`.
+
+`~/.tm-config` should define:
+
+```bash
 export TM_BASE_URL="https://test-management-project.vercel.app"   # or http://localhost:3000 for local dev
-export TM_REVIEW_MODE="mandatory"   # "mandatory" = always use changesets (default), "ask" = ask user each time, "off" = create directly
+export TM_REVIEW_MODE="mandatory"   # "mandatory" = always use changesets, "ask" = ask user each time, "off" = create directly
+export TM_TOKEN="$(...credential lookup...)"
 ```
 
 Every request must include:
@@ -462,7 +470,7 @@ Before starting any write operations, ask: "Should I put these test cases into a
 - **Reference case IDs when you know them** — e.g. "mark TC-42 as FAILED" is faster than describing the case.
 - **Apply the `api` tag only for direct endpoint tests** — when creating test cases that call API endpoints directly, run `GET /api/v1/tags`, find the existing tag named `api`, and include its ID in `tagIds`. Do not create the tag or apply it to UI/manual tests unless the user explicitly asks.
 - **Apply the `smoke` tag sparingly** — use `smoke` for the smallest must-pass set proving the core app is accessible and usable. Do not tag every happy path as `smoke`. When needed, run `GET /api/v1/tags`, find the existing tag named `smoke`, and include its ID in `tagIds`. Do not create the tag if it is missing.
-- **Token is per-project** — if you work across multiple projects, generate a separate token for each and switch `TM_TOKEN` accordingly.
+- **Token is per-project** — if you work across multiple projects, generate a separate token for each and rerun the installer when switching `TM_BASE_URL`.
 
 ---
 
@@ -470,9 +478,14 @@ Before starting any write operations, ask: "Should I put these test cases into a
 
 | Problem | Fix |
 |---------|-----|
-| `401 Unauthorized` | Token is invalid or `TM_TOKEN` is not exported in the current shell |
+| `TM_TOKEN` is empty after sourcing `~/.tm-config` | Credential lookup failed. Rerun the installer and paste a valid token when prompted. |
+| Missing macOS `security` command | Run from a normal macOS terminal where `/usr/bin/security` is available, then rerun the installer. |
+| Windows PowerShell or Credential Manager errors | Run from Windows Git Bash with `powershell.exe` available and Credential Manager enabled. |
+| Windows credential lookup is slow | The generated config starts PowerShell to read Credential Manager; this startup cost is expected. |
+| Linux or WSL installer failure | Linux and WSL are unsupported by the installer; it exits before installing skill docs or changing config. |
+| `401 Unauthorized` | Stored token is invalid, expired, or belongs to a different project. Generate a new token and rerun the installer. |
 | `404 Folder not found` | The `folderId` doesn't belong to this token's project — ask to "list folders" first |
 | `400 Invalid tag IDs` | Tag IDs must belong to the project — check Project Settings → Tags |
 | `400 Changeset is not open` | Changeset was already submitted — call `/reopen` first, then add items and submit again |
 | `404 Changeset not found` | The `changesetId` doesn't exist or doesn't belong to this project |
-| Wrong URL constructed | Make sure `TM_BASE_URL` has no trailing slash and matches your actual deployment URL |
+| Wrong URL constructed | Make sure `TM_BASE_URL` has no trailing slash and matches your actual deployment URL. Rerun the installer after base URL changes so the credential target is updated. |
