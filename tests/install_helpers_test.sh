@@ -113,7 +113,7 @@ assert_contains 'OTHER=tm_not_secret' "$redacted" "keeps non-token assignments"
 CONFIG_FILE="$TMP_DIR/tm-config"
 PLATFORM="macos"
 TM_CREDENTIAL_TARGET_VALUE="TestManagement API Token"
-write_config "$CONFIG_FILE" "https://mac.example" "ask" >/dev/null
+write_config "$CONFIG_FILE" "https://mac.example" >/dev/null
 assert_contains 'security find-generic-password' "$CONFIG_FILE" "macOS config uses security lookup"
 assert_contains '2>/dev/null || true' "$CONFIG_FILE" "macOS config suppresses lookup failures"
 assert_not_contains 'tm_old_literal' "$CONFIG_FILE" "macOS config contains no literal token"
@@ -123,7 +123,7 @@ assert_eq '$(security find-generic-password -s ' "$(read_existing_config_value T
 
 PLATFORM="windows-git-bash"
 TM_CREDENTIAL_TARGET_VALUE="TestManagement API Token:https://win.example"
-write_config "$CONFIG_FILE" "https://win.example" "mandatory" >/dev/null
+write_config "$CONFIG_FILE" "https://win.example" >/dev/null
 assert_contains 'powershell.exe -NoProfile -NonInteractive' "$CONFIG_FILE" "Windows config uses PowerShell lookup"
 assert_contains '2>/dev/null || true' "$CONFIG_FILE" "Windows config suppresses lookup failures"
 assert_contains 'TM_CREDENTIAL_TARGET="$TM_CREDENTIAL_TARGET"' "$CONFIG_FILE" "Windows config passes target via environment"

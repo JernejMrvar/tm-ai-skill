@@ -347,14 +347,12 @@ backup_existing_config() {
 write_config() {
   local file="${1:-$CONFIG_FILE}"
   local base_url="$2"
-  local review_mode="$3"
   local target="$TM_CREDENTIAL_TARGET_VALUE"
 
   case "$PLATFORM" in
     macos)
       cat > "$file" <<EOF
 export TM_BASE_URL="$base_url"
-export TM_REVIEW_MODE="$review_mode"
 export TM_SECRET_BACKEND="macos-keychain"
 export TM_CREDENTIAL_SERVICE="TestManagement API Token"
 export TM_CREDENTIAL_ACCOUNT="\$TM_BASE_URL"
@@ -364,7 +362,6 @@ EOF
     windows-git-bash)
       cat > "$file" <<EOF
 export TM_BASE_URL="$base_url"
-export TM_REVIEW_MODE="$review_mode"
 export TM_SECRET_BACKEND="windows-credential-manager"
 export TM_CREDENTIAL_TARGET="$target"
 export TM_TOKEN="\$(TM_CREDENTIAL_TARGET="\$TM_CREDENTIAL_TARGET" powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command '\$ErrorActionPreference = "Stop"; Add-Type -TypeDefinition "using System; using System.Runtime.InteropServices; using System.Text; public static class CredMan { [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)] public struct CREDENTIAL { public UInt32 Flags; public UInt32 Type; public string TargetName; public string Comment; public System.Runtime.InteropServices.ComTypes.FILETIME LastWritten; public UInt32 CredentialBlobSize; public IntPtr CredentialBlob; public UInt32 Persist; public UInt32 AttributeCount; public IntPtr Attributes; public string TargetAlias; public string UserName; } [DllImport(""advapi32.dll"", SetLastError = true, CharSet = CharSet.Unicode)] public static extern bool CredRead(string target, UInt32 type, UInt32 reservedFlag, out IntPtr credentialPtr); [DllImport(""advapi32.dll"", SetLastError = true)] public static extern void CredFree(IntPtr buffer); }"; [IntPtr]\$ptr = [IntPtr]::Zero; if (-not [CredMan]::CredRead(\$env:TM_CREDENTIAL_TARGET, 1, 0, [ref]\$ptr)) { exit 1 }; try { \$cred = [Runtime.InteropServices.Marshal]::PtrToStructure(\$ptr, [type][CredMan+CREDENTIAL]); if (\$cred.CredentialBlobSize -gt 0) { \$bytes = New-Object byte[] \$cred.CredentialBlobSize; [Runtime.InteropServices.Marshal]::Copy(\$cred.CredentialBlob, \$bytes, 0, \$bytes.Length); [Text.Encoding]::Unicode.GetString(\$bytes).TrimEnd([char]0) } } finally { [CredMan]::CredFree(\$ptr) }' 2>/dev/null || true)"
@@ -423,12 +420,6 @@ resolve_base_url() {
   strip_trailing_slashes "$value"
 }
 
-resolve_review_mode() {
-  local value
-  value="$(read_existing_config_value TM_REVIEW_MODE "$CONFIG_FILE" 2>/dev/null || true)"
-  printf '%s\n' "${value:-ask}"
-}
-
 resolve_token() {
   local base_url="$1"
   local existing_token stored_token target
@@ -464,9 +455,8 @@ main() {
   detect_platform >/dev/null
   ensure_supported_platform
 
-  local base_url review_mode token
+  local base_url token
   base_url="$(resolve_base_url)"
-  review_mode="$(resolve_review_mode)"
   credential_target "$base_url" >/dev/null
   token="$(resolve_token "$base_url")"
 
@@ -474,7 +464,7 @@ main() {
   echo "✓ Stored TM_TOKEN in $TM_SECRET_BACKEND_VALUE"
 
   backup_existing_config "$CONFIG_FILE"
-  write_config "$CONFIG_FILE" "$base_url" "$review_mode"
+  write_config "$CONFIG_FILE" "$base_url"
   install_skill_docs
 
   if validate_connection "$CONFIG_FILE"; then

@@ -12,16 +12,6 @@ source ~/.tm-config 2>/dev/null
 
 If `TM_TOKEN` is empty after sourcing, report that credential lookup failed. Tell the user to rerun the installer and check troubleshooting for missing OS credentials, missing `security` on macOS, Windows PowerShell/Credential Manager errors, invalid tokens, unsupported Linux/WSL, or base URL changes.
 
-After sourcing, read `TM_REVIEW_MODE` to determine how write operations are handled:
-
-| `TM_REVIEW_MODE` | Behaviour |
-|------------------|-----------|
-| `mandatory` (default if unset) | **Always use a changeset, no exceptions.** Open one at the start of every write session, attach all created test cases and folders to it via `changesetId`, and submit when done. Never create test cases without a `changesetId`, even if the user asks to skip review. |
-| `ask` | **Ask the user before each write session.** Say: "Should I put these test cases into a changeset for review, or create them directly?" Then follow their answer for the rest of that session. |
-| `off` | **Skip changesets entirely.** Create test cases and folders directly with no `changesetId`. |
-
-If `TM_REVIEW_MODE` is empty or not set, treat it as `ask`.
-
 ---
 
 ## Setup
@@ -45,7 +35,6 @@ The installer supports macOS and Windows Git Bash. It prompts for the `tm_...` t
 
 ```bash
 export TM_BASE_URL="https://test-management-project.vercel.app"   # or http://localhost:3000 for local dev
-export TM_REVIEW_MODE="mandatory"   # "mandatory" = always use changesets, "ask" = ask user each time, "off" = create directly
 export TM_TOKEN="$(...credential lookup...)"
 ```
 
@@ -134,65 +123,11 @@ Response shape: `{ "folders": [ { "id", "name", "parentId", "position", "testCas
 |-------|-------|
 | `name` | required |
 | `parentId` | optional int; must belong to the project |
-| `changesetId` | optional int; attaches this folder to a changeset for review |
 
 ```bash
 curl -sS -X POST -H "Authorization: Bearer $TM_TOKEN" -H "Content-Type: application/json" \
   -d '{"name":"Auth","parentId":null}' \
   "$TM_BASE_URL/api/v1/folders"
-```
-
----
-
-## Changesets (batch review workflow)
-
-A **changeset** groups write operations into a reviewable batch. Use this workflow when you want a human to approve test cases before they go live.
-
-### Create a changeset
-
-`POST /api/v1/changesets`
-
-| Field | Notes |
-|-------|-------|
-| `name` | optional string — describe the batch (e.g. "Login flow test cases") |
-| `description` | optional longer description |
-
-Returns `{ "id", "name", "status": "OPEN", ... }`. Save the `id` as `CHANGESET_ID`.
-
-```bash
-curl -sS -X POST -H "Authorization: Bearer $TM_TOKEN" -H "Content-Type: application/json" \
-  -d '{"name":"Login flow test cases"}' \
-  "$TM_BASE_URL/api/v1/changesets"
-```
-
-### Get changeset
-
-`GET /api/v1/changesets/{id}`
-
-```bash
-curl -sS -H "Authorization: Bearer $TM_TOKEN" "$TM_BASE_URL/api/v1/changesets/$CHANGESET_ID"
-```
-
-### Submit changeset for review
-
-`POST /api/v1/changesets/{id}/submit`
-
-Sets status from `OPEN` → `PENDING_REVIEW`. Only call when you are done adding items.
-
-```bash
-curl -sS -X POST -H "Authorization: Bearer $TM_TOKEN" \
-  "$TM_BASE_URL/api/v1/changesets/$CHANGESET_ID/submit"
-```
-
-### Reopen a submitted changeset
-
-`POST /api/v1/changesets/{id}/reopen`
-
-Sets status from `PENDING_REVIEW` → `OPEN`. Use to add more items before the human reviews.
-
-```bash
-curl -sS -X POST -H "Authorization: Bearer $TM_TOKEN" \
-  "$TM_BASE_URL/api/v1/changesets/$CHANGESET_ID/reopen"
 ```
 
 ---
@@ -253,11 +188,10 @@ curl -sS -H "Authorization: Bearer $TM_TOKEN" "$TM_BASE_URL/api/v1/test-cases/42
 | `steps` | optional array of `{ "action": string, "data"?: string, "expected"?: string }`. Use `data` for concrete fixtures/inputs/endpoints/messages and `expected` for the step-level outcome. |
 | `expectedResult` | optional string |
 | `priority` | default `MEDIUM` |
-| `status` | default `ACTUAL`; **automatically overridden to `DRAFT` when `changesetId` is provided** |
+| `status` | default `ACTUAL` |
 | `folderId` | optional; must belong to the project |
 | `tagIds` | optional int[]; tags must belong to the project. Resolve existing tag IDs with `GET /api/v1/tags` before applying tag rules below. |
 | `position` | optional; if omitted, appends after last case in same folder |
-| `changesetId` | optional int; attaches this test case to an OPEN changeset for human review |
 
 ```bash
 curl -sS -X POST -H "Authorization: Bearer $TM_TOKEN" -H "Content-Type: application/json" \
@@ -429,30 +363,10 @@ Returns `{ "url", "filename", "contentType", "sizeBytes" }` — use `url` in com
 
 ## Typical flows
 
-**TM_REVIEW_MODE=mandatory (default) — Always use a changeset**
-
-1. `POST /api/v1/changesets` with `{ "name": "<short description of what you're creating>" }` → save `changesetId`
-2. `GET /api/v1/folders` → pick `folderId`
-3. `POST /api/v1/test-cases` for each case, including `"changesetId": <id>` — status is automatically set to `DRAFT`
-4. `POST /api/v1/changesets/{id}/submit` to mark the batch ready for review
-5. Tell the user: "I've created N test cases for review. Open `{TM_BASE_URL}/dashboard/changesets/{id}` to approve them."
-
-Do not skip this flow even if the user asks to — explain that `TM_REVIEW_MODE=mandatory` requires changeset review, and suggest they set `TM_REVIEW_MODE=ask` or `off` in `~/.tm-config` if they want to change this.
-
-To add more items to an existing open changeset: ask the user for the changeset ID.
-To reopen a submitted changeset: `POST /api/v1/changesets/{id}/reopen`, then add more items and submit again.
-
-**TM_REVIEW_MODE=ask — Ask the user before each write session**
-
-Before starting any write operations, ask: "Should I put these test cases into a changeset for review, or create them directly?"
-
-- If the user says **yes / review / changeset** → follow the `mandatory` flow above for this session
-- If the user says **no / direct / skip** → follow the `off` flow below for this session
-
-**TM_REVIEW_MODE=off — Create cases immediately (no review)**
+**Create cases directly**
 
 1. `GET /api/v1/folders` → pick `folderId`
-2. `POST /api/v1/test-cases` for each case (no `changesetId`)
+2. `POST /api/v1/test-cases` for each case
 
 **Create cases, then a run, then report**
 
@@ -486,6 +400,4 @@ Before starting any write operations, ask: "Should I put these test cases into a
 | `401 Unauthorized` | Stored token is invalid, expired, or belongs to a different project. Generate a new token and rerun the installer. |
 | `404 Folder not found` | The `folderId` doesn't belong to this token's project — ask to "list folders" first |
 | `400 Invalid tag IDs` | Tag IDs must belong to the project — check Project Settings → Tags |
-| `400 Changeset is not open` | Changeset was already submitted — call `/reopen` first, then add items and submit again |
-| `404 Changeset not found` | The `changesetId` doesn't exist or doesn't belong to this project |
 | Wrong URL constructed | Make sure `TM_BASE_URL` has no trailing slash and matches your actual deployment URL. Rerun the installer after base URL changes so the credential target is updated. |

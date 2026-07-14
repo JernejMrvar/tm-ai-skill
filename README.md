@@ -49,7 +49,7 @@ Agents still load credentials the usual way:
 source ~/.tm-config 2>/dev/null
 ```
 
-Do not paste `TM_TOKEN` into `~/.tm-config`. That file should contain only `TM_BASE_URL`, `TM_REVIEW_MODE`, credential metadata, and a command that looks up the token from the OS credential store. If you already had a plaintext `TM_TOKEN=tm_...` in `~/.tm-config`, the installer migrates it into the credential store, writes a redacted backup, and rewrites the config without the secret.
+Do not paste `TM_TOKEN` into `~/.tm-config`. That file should contain only `TM_BASE_URL`, credential metadata, and a command that looks up the token from the OS credential store. If you already had a plaintext `TM_TOKEN=tm_...` in `~/.tm-config`, the installer migrates it into the credential store, writes a redacted backup, and rewrites the config without the secret.
 
 **To get a token:** open your TestManagement project → **Project Settings → API Tokens → New Token**. Copy the `tm_...` value — it's shown only once.
 
