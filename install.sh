@@ -6,6 +6,7 @@ DEFAULT_TM_BASE_URL="https://test-management-project.vercel.app"
 CONFIG_FILE="${TM_CONFIG_FILE:-$HOME/.tm-config}"
 CONFIG_BACKUP_TIMESTAMP="${CONFIG_BACKUP_TIMESTAMP:-}"
 TM_INSTALL_TEST_MODE="${TM_INSTALL_TEST_MODE:-0}"
+TM_INSTALL_TTY_PATH="${TM_INSTALL_TTY_PATH:-/dev/tty}"
 
 PLATFORM=""
 TM_SECRET_BACKEND_VALUE=""
@@ -281,11 +282,11 @@ prompt_token() {
 
   if [ "$TM_INSTALL_TEST_MODE" = "1" ] && [ "${TM_INSTALL_PROMPT_TOKEN+x}" = "x" ]; then
     token="$TM_INSTALL_PROMPT_TOKEN"
-  elif ! { printf '%s' "$prompt" > /dev/tty && IFS= read -rs token < /dev/tty && printf '\n' > /dev/tty; } 2>/dev/null; then
+  elif ! { printf '%s' "$prompt" > "$TM_INSTALL_TTY_PATH" && IFS= read -rs token < "$TM_INSTALL_TTY_PATH" && printf '\n' > "$TM_INSTALL_TTY_PATH"; } 2>/dev/null; then
     if [ "$allow_empty" = "1" ] && [ -n "$existing_token" ]; then
-      echo "No /dev/tty available; reusing existing stored TM_TOKEN." >&2
-      printf '%s\n' "$existing_token"
-      return 0
+      echo "Error: TM_TOKEN is already stored, but /dev/tty is unavailable to confirm whether to reuse or replace it." >&2
+      echo "Run the installer from an interactive terminal, then press Enter to reuse it or paste a new tm_ token." >&2
+      return 1
     fi
     echo "Error: no stored token was found and /dev/tty is unavailable for a secure prompt." >&2
     echo "Run the installer from an interactive terminal or migrate an existing TM_TOKEN in ~/.tm-config." >&2

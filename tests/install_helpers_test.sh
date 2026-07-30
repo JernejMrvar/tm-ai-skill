@@ -53,6 +53,20 @@ assert_not_contains() {
   printf 'ok - %s\n' "$label"
 }
 
+assert_text_contains() {
+  local needle="$1"
+  local text="$2"
+  local label="$3"
+
+  if [[ "$text" != *"$needle"* ]]; then
+    printf 'not ok - %s\nmissing: %s\ntext: %s\n' "$label" "$needle" "$text" >&2
+    exit 1
+  fi
+
+  pass_count=$((pass_count + 1))
+  printf 'ok - %s\n' "$label"
+}
+
 config="$TMP_DIR/config"
 redacted="$TMP_DIR/redacted"
 
@@ -95,6 +109,14 @@ assert_eq "tm_stored_token" "$(resolve_token "https://example.test")" "blank pro
 TM_INSTALL_PROMPT_TOKEN="tm_replacement_token"
 assert_eq "tm_replacement_token" "$(resolve_token "https://example.test")" "prompt input replaces stored credential"
 unset TM_INSTALL_PROMPT_TOKEN
+
+TM_INSTALL_TTY_PATH="$TMP_DIR/missing-tty"
+if output="$(prompt_new_or_existing_token "tm_stored_token" 2>&1)"; then
+  printf 'not ok - stored credential without tty should fail\nunexpected: %s\n' "$output" >&2
+  exit 1
+fi
+assert_text_contains "unavailable to confirm whether to reuse or replace it" "$output" "stored credential without tty fails clearly"
+TM_INSTALL_TTY_PATH="/dev/tty"
 
 printf 'export TM_TOKEN=tm_plaintext_token\n' > "$config"
 assert_eq "tm_plaintext_token" "$(resolve_token "https://example.test")" "plaintext token overrides stored credential for migration"
