@@ -29,7 +29,7 @@ If `TM_TOKEN` is empty after sourcing, report that credential lookup failed. Tel
 curl -fsSL https://raw.githubusercontent.com/JernejMrvar/tm-ai-skill/main/install.sh | bash
 ```
 
-The installer supports macOS and Windows Git Bash. It prompts for the `tm_...` token through `/dev/tty`, stores it in the OS credential store, and writes `~/.tm-config` with non-secret exports and lookup logic. Do not manually write plaintext `TM_TOKEN` values into `~/.tm-config`.
+The installer supports macOS and Windows Git Bash. It prompts for the `tm_...` token through `/dev/tty`, stores it in the OS credential store, and writes `~/.tm-config` with non-secret exports and lookup logic. If a token is already stored, the installer asks for a replacement token and treats blank input as "reuse the existing token". Do not manually write plaintext `TM_TOKEN` values into `~/.tm-config`.
 
 `~/.tm-config` should define:
 
@@ -397,7 +397,7 @@ Returns `{ "url", "filename", "contentType", "sizeBytes" }` — use `url` in com
 | Windows PowerShell or Credential Manager errors | Run from Windows Git Bash with `powershell.exe` available and Credential Manager enabled. |
 | Windows credential lookup is slow | The generated config starts PowerShell to read Credential Manager; this startup cost is expected. |
 | Linux or WSL installer failure | Linux and WSL are unsupported by the installer; it exits before installing skill docs or changing config. |
-| `401 Unauthorized` | Stored token is invalid, expired, or belongs to a different project. Generate a new token and rerun the installer. |
+| `401 Unauthorized` | Stored token is invalid, expired, or belongs to a different project. Generate a new token, rerun the installer, and paste the new token when it asks whether to replace the stored token. |
 | `404 Folder not found` | The `folderId` doesn't belong to this token's project — ask to "list folders" first |
 | `400 Invalid tag IDs` | Tag IDs must belong to the project — check Project Settings → Tags |
 | Wrong URL constructed | Make sure `TM_BASE_URL` has no trailing slash and matches your actual deployment URL. Rerun the installer after base URL changes so the credential target is updated. |

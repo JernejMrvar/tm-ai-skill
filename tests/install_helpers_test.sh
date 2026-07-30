@@ -89,7 +89,12 @@ PLATFORM="macos"
 CONFIG_FILE="$config"
 
 printf 'export TM_TOKEN="$(security find-generic-password -s "$TM_CREDENTIAL_SERVICE" -a "$TM_CREDENTIAL_ACCOUNT" -w 2>/dev/null || true)"\n' > "$config"
-assert_eq "tm_stored_token" "$(resolve_token "https://example.test")" "rerun uses stored credential when config has lookup"
+TM_INSTALL_PROMPT_TOKEN=""
+assert_eq "tm_stored_token" "$(resolve_token "https://example.test")" "blank prompt input reuses stored credential"
+
+TM_INSTALL_PROMPT_TOKEN="tm_replacement_token"
+assert_eq "tm_replacement_token" "$(resolve_token "https://example.test")" "prompt input replaces stored credential"
+unset TM_INSTALL_PROMPT_TOKEN
 
 printf 'export TM_TOKEN=tm_plaintext_token\n' > "$config"
 assert_eq "tm_plaintext_token" "$(resolve_token "https://example.test")" "plaintext token overrides stored credential for migration"

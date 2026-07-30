@@ -53,6 +53,8 @@ Do not paste `TM_TOKEN` into `~/.tm-config`. That file should contain only `TM_B
 
 **To get a token:** open your TestManagement project → **Project Settings → API Tokens → New Token**. Copy the `tm_...` value — it's shown only once.
 
+To change the stored API token, rerun the installer. If a token is already stored, the installer asks you to paste a new one or press Enter to reuse the existing token.
+
 To change `TM_BASE_URL`, rerun the installer so the token is stored under the matching credential target.
 
 ---
@@ -79,7 +81,7 @@ The AI will source your config automatically before making any API calls.
 | macOS says `security` is missing | Run from a normal macOS terminal where `/usr/bin/security` is available. |
 | Windows credential errors | Run from Git Bash on Windows with `powershell.exe` available and Credential Manager enabled. |
 | `TM_TOKEN` is empty after `source ~/.tm-config` | The OS credential lookup failed or the credential is missing. Rerun the installer and paste a valid token when prompted. |
-| `401 Unauthorized` | The stored token is invalid or belongs to another project. Generate a new token and rerun the installer. |
+| `401 Unauthorized` | The stored token is invalid or belongs to another project. Generate a new token, rerun the installer, and paste the new token when it asks whether to replace the stored token. |
 | Wrong base URL | Rerun the installer after changing `TM_BASE_URL`; credential targets are tied to the base URL. |
 | Windows lookup feels slow | The generated config starts PowerShell to read Credential Manager. This startup cost is expected. |
 

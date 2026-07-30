@@ -274,17 +274,28 @@ credential_exists() {
 }
 
 prompt_token() {
+  local prompt="${1:-Paste your TestManagement API token (starts with tm_): }"
+  local allow_empty="${2:-0}"
+  local existing_token="${3:-}"
   local token=""
 
-  if [ ! -r /dev/tty ]; then
+  if [ "$TM_INSTALL_TEST_MODE" = "1" ] && [ "${TM_INSTALL_PROMPT_TOKEN+x}" = "x" ]; then
+    token="$TM_INSTALL_PROMPT_TOKEN"
+  elif ! { printf '%s' "$prompt" > /dev/tty && IFS= read -rs token < /dev/tty && printf '\n' > /dev/tty; } 2>/dev/null; then
+    if [ "$allow_empty" = "1" ] && [ -n "$existing_token" ]; then
+      echo "No /dev/tty available; reusing existing stored TM_TOKEN." >&2
+      printf '%s\n' "$existing_token"
+      return 0
+    fi
     echo "Error: no stored token was found and /dev/tty is unavailable for a secure prompt." >&2
     echo "Run the installer from an interactive terminal or migrate an existing TM_TOKEN in ~/.tm-config." >&2
     return 1
   fi
 
-  printf 'Paste your TestManagement API token (starts with tm_): ' > /dev/tty
-  IFS= read -rs token < /dev/tty
-  printf '\n' > /dev/tty
+  if [ -z "$token" ] && [ "$allow_empty" = "1" ] && [ -n "$existing_token" ]; then
+    printf '%s\n' "$existing_token"
+    return 0
+  fi
 
   if [[ "$token" != tm_* ]]; then
     echo "Error: token must start with tm_." >&2
@@ -292,6 +303,16 @@ prompt_token() {
   fi
 
   printf '%s\n' "$token"
+}
+
+prompt_new_or_existing_token() {
+  local existing_token="$1"
+
+  prompt_token "A TM_TOKEN is already stored. Paste a new token to replace it, or press Enter to reuse it: " "1" "$existing_token"
+}
+
+prompt_required_token() {
+  prompt_token
 }
 
 store_secret() {
@@ -441,14 +462,14 @@ resolve_token() {
         ;;
     esac
     if [[ "$stored_token" == tm_* ]]; then
-      printf '%s\n' "$stored_token"
-      return 0
+      prompt_new_or_existing_token "$stored_token"
+      return
     elif [ -n "$stored_token" ]; then
       echo "Warning: stored credential does not start with tm_; prompting for a replacement." >&2
     fi
   fi
 
-  prompt_token
+  prompt_required_token
 }
 
 main() {
