@@ -27,7 +27,9 @@ Keep existing numeric `id`, `testCaseId`, and `testRunCaseId` values for
 legacy clients and nested mutations. Never reinterpret a legacy numeric ID as
 a public number, and never send a caller-supplied `publicNumber` when creating
 a resource—the API allocates it. When a public and legacy reference are both
-provided, they must identify the same test case or the request is rejected.
+provided, they must identify the same test case. In a batch results request, a
+mismatch rejects only that result: the API continues processing the other
+results and returns HTTP 200 with details in the response `errors` array.
 
 For lookup by public reference, use the project-code routes:
 
@@ -462,7 +464,13 @@ curl -sS -X POST -H "Authorization: Bearer $TM_TOKEN" -H "Content-Type: applicat
   "$TM_BASE_URL/api/v1/test-runs/10/results"
 ```
 
-Response includes `mapped`, `unmapped`, `errors`, and `cases` with `testRunCaseId` for comments.
+Response includes `mapped`, `unmapped`, `errors`, and `cases` with
+`testRunCaseId` for comments. HTTP 200 means the batch was processed, not that
+every result was accepted. Always inspect `errors`; a non-empty array means the
+offending results were skipped while other results may already have been
+applied. Treat that response as a partial failure. Resolve the errors and
+successfully resubmit the rejected results before reporting success or
+completing the run.
 
 ---
 
@@ -511,7 +519,8 @@ Returns `{ "url", "filename", "contentType", "sizeBytes" }` — use `url` in com
 2. `POST /api/v1/test-cases` for each case
 3. `POST /api/v1/test-runs` → `runId`
 4. `POST /api/v1/test-runs/{runId}/results` with `{ testCaseId, testTitle, status }` or `{ testCasePublicId, testTitle, status }` per case
-5. `POST /api/v1/test-runs/{runId}/complete`
+5. Inspect `errors`; resolve and resubmit every rejected result until `errors` is empty
+6. `POST /api/v1/test-runs/{runId}/complete`
 
 ---
 
