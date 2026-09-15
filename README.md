@@ -6,8 +6,8 @@ An AI skill for [TestManagement](https://github.com/JernejMrvar) that lets you m
 
 Point your AI tool at `SKILL.md` and it can:
 
-- List, create, and browse folders
-- List tags
+- List, create, browse, and delete folders (including recursive subtree deletion with test-case preservation)
+- List, create, edit, and delete project tags
 - List, get, create, update, and delete test cases (with steps, priority, tags, and folder placement)
 - List, get, create, and delete test runs
 - Add and remove individual cases from a test run
@@ -16,6 +16,17 @@ Point your AI tool at `SKILL.md` and it can:
 - Complete or cancel test runs
 
 All actions are scoped to the project your API token belongs to and are recorded in the Audit Log.
+
+## API-only safety boundary
+
+This skill is deliberately API-only. Agents must use `$TM_BASE_URL/api/v1/*` with `TM_TOKEN` and must never fall back to the TestManagement browser UI, an authenticated browser session, or the session-based `/api/*` routes. If the token is missing, invalid, points at the wrong project, or the required v1 operation is unavailable, the agent stops and reports the problem instead of using browser credentials.
+
+This distinction matters because a browser may already be signed in as an administrator with access to multiple projects. Browser/session operations are authorized as that user rather than scoped by the API token.
+
+The installer downloads `SKILL.md` into `~/.codex/tm-api.md`,
+`~/.claude/tm-api.md`, and `~/.cursor/rules/tm-api.md`; endpoint documentation
+in `SKILL.md` is therefore the distribution source for all three installed
+copies.
 
 ---
 

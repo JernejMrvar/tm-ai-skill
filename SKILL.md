@@ -1,6 +1,18 @@
 # TestManagement AI Skill
 
-Use this skill to manage test cases and test runs in a TestManagement project directly from your AI tool — no browser needed.
+Use this skill to manage test cases and test runs in a TestManagement project directly through its token-authenticated API.
+
+## Mandatory API-only guardrail
+
+All TestManagement reads and writes performed under this skill must use direct HTTP requests to `$TM_BASE_URL/api/v1/*` with the configured `TM_TOKEN` bearer token.
+
+- **Never open or control a browser to perform a TestManagement operation.** Do not navigate the TestManagement UI, click its forms, execute requests in a page context, or use an existing signed-in browser session.
+- **Never call the browser/session API routes under `/api/*`.** In particular, `/api/test-cases` is not an alternative to `/api/v1/test-cases`; it uses the logged-in browser user's permissions and is not scoped by `TM_TOKEN`.
+- Browser availability, an existing login, or broader permissions on the logged-in user do not authorize switching away from the token-authenticated API.
+- If credentials are missing, authentication fails, the requested project cannot be identified through the token-scoped v1 responses, or a required v1 operation is unavailable, stop and report the problem. **Do not fall back to the browser, the UI, session cookies, or a non-v1 endpoint.**
+- The project selected by `TM_TOKEN` is the only project in scope. Do not search for or switch to another project through the browser. If the returned folders, tags, test cases, or test runs do not match the user's intended project, make no mutations and ask the user to configure the correct project token.
+
+This restriction applies even when browser-control tools are available. A successful write made through this skill should be attributed in the TestManagement Audit Log as `API: <token name>`, never as the logged-in browser user.
 
 ## Before making any API call
 
@@ -68,7 +80,7 @@ These are defaults, not rules; user instructions override them.
   - Do not tag with a folder name like `login` inside the `Login` folder
   - Do not use `ui` unless specifically visual/layout/component behavior
 - Before creating more than 5 cases, summarize proposed folders, case count, and tags, then ask for confirmation unless the user already gave strong instructions.
-- Folder deletion may not exist in v1; if `DELETE /api/v1/folders/{id}` returns 404, report that and leave empty folders rather than using unsupported workarounds.
+- Folder deletion is recursive and destructive: list folders first, confirm the exact folder ID, and explain that deleting it also deletes descendants while preserving their test cases with `folderId` set to `null`.
 
 ### Auth starter suite example
 
@@ -130,6 +142,24 @@ curl -sS -X POST -H "Authorization: Bearer $TM_TOKEN" -H "Content-Type: applicat
   "$TM_BASE_URL/api/v1/folders"
 ```
 
+## Delete folder
+
+`DELETE /api/v1/folders/{id}`
+
+The folder ID must belong to the project selected by `TM_TOKEN`. A successful
+deletion returns `{ "success": true }` with HTTP `200`. Missing, cross-project,
+or already-deleted folders return `404`.
+
+Deletion removes the selected folder and its entire descendant subtree. Test
+cases in the selected folder or any descendant are preserved and become
+unfiled (`folderId: null`); empty folders are removed as well.
+
+```bash
+curl -sS -X DELETE \
+  -H "Authorization: Bearer $TM_TOKEN" \
+  "$TM_BASE_URL/api/v1/folders/42"
+```
+
 ---
 
 ## List tags
@@ -143,6 +173,66 @@ curl -sS -H "Authorization: Bearer $TM_TOKEN" "$TM_BASE_URL/api/v1/tags"
 ```
 
 Response shape: `{ "tags": [ { "id", "name" } ] }`
+
+## Create tag
+
+`POST /api/v1/tags` — JSON body.
+
+| Field | Notes |
+|-------|-------|
+| `name` | required; surrounding whitespace is trimmed, then the value must be 1–100 characters |
+| `color` | optional six-digit hex color such as `#3B82F6`; defaults to `#6B7280` |
+
+The response is the created tag `{ "id", "name", "color" }` with HTTP `201`.
+Tag names must be unique within the token's project; duplicates return `409`.
+
+```bash
+curl -sS -X POST \
+  -H "Authorization: Bearer $TM_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"smoke","color":"#10B981"}' \
+  "$TM_BASE_URL/api/v1/tags"
+```
+
+## Update tag
+
+`PATCH /api/v1/tags/{id}` — JSON body with one or both fields:
+
+```json
+{ "name": "critical", "color": "#EF4444" }
+```
+
+The update is partial: omitted fields are preserved. Names are trimmed and
+must be 1–100 characters; colors must be six-digit hex values. An empty
+payload, malformed payload, or invalid field returns `400`. The response is
+the updated tag `{ "id", "name", "color" }`. Duplicate names return `409`,
+and missing or cross-project tags return `404`.
+
+```bash
+curl -sS -X PATCH \
+  -H "Authorization: Bearer $TM_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"color":"#EF4444"}' \
+  "$TM_BASE_URL/api/v1/tags/42"
+```
+
+Renaming or recoloring keeps the tag ID and all existing test-case
+associations.
+
+## Delete tag
+
+`DELETE /api/v1/tags/{id}`
+
+A successful deletion returns `{ "success": true }` with HTTP `200`.
+Missing, cross-project, or already-deleted tags return `404`. Deleting a tag
+removes its associations only; test cases, test runs, and results are
+preserved.
+
+```bash
+curl -sS -X DELETE \
+  -H "Authorization: Bearer $TM_TOKEN" \
+  "$TM_BASE_URL/api/v1/tags/42"
+```
 
 ---
 
@@ -381,6 +471,7 @@ Returns `{ "url", "filename", "contentType", "sizeBytes" }` — use `url` in com
 ## Tips
 
 - **Be specific about folder names** — list folders first if you need to resolve a name to an ID.
+- **Resolve IDs before mutations** — list folders or tags first, and confirm the selected item belongs to the token-scoped project before deleting or editing it.
 - **Reference case IDs when you know them** — e.g. "mark TC-42 as FAILED" is faster than describing the case.
 - **Apply the `api` tag only for direct endpoint tests** — when creating test cases that call API endpoints directly, run `GET /api/v1/tags`, find the existing tag named `api`, and include its ID in `tagIds`. Do not create the tag or apply it to UI/manual tests unless the user explicitly asks.
 - **Apply the `smoke` tag sparingly** — use `smoke` for the smallest must-pass set proving the core app is accessible and usable. Do not tag every happy path as `smoke`. When needed, run `GET /api/v1/tags`, find the existing tag named `smoke`, and include its ID in `tagIds`. Do not create the tag if it is missing.
@@ -399,5 +490,6 @@ Returns `{ "url", "filename", "contentType", "sizeBytes" }` — use `url` in com
 | Linux or WSL installer failure | Linux and WSL are unsupported by the installer; it exits before installing skill docs or changing config. |
 | `401 Unauthorized` | Stored token is invalid, expired, or belongs to a different project. Generate a new token, rerun the installer, and paste the new token when it asks whether to replace the stored token. |
 | `404 Folder not found` | The `folderId` doesn't belong to this token's project — ask to "list folders" first |
+| `404 Tag not found` | The tag ID doesn't belong to this token's project — ask to "list tags" first |
 | `400 Invalid tag IDs` | Tag IDs must belong to the project — check Project Settings → Tags |
 | Wrong URL constructed | Make sure `TM_BASE_URL` has no trailing slash and matches your actual deployment URL. Rerun the installer after base URL changes so the credential target is updated. |

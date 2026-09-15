@@ -412,6 +412,7 @@ validate_connection() {
 install_skill_docs() {
   echo "Installing TestManagement AI skill..."
 
+  # SKILL.md is the source distributed to each supported AI tool.
   mkdir -p "$HOME/.codex"
   curl -fsSL -o "$HOME/.codex/tm-api.md" "$SKILL_URL"
 
