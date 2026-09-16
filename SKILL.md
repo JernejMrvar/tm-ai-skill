@@ -151,6 +151,10 @@ These are defaults, not rules; user instructions override them.
 
 Returns folders with `publicNumber`, `publicId`, `projectCode`, and `testCaseCount` per folder.
 
+When presenting a folder list to the user, do not include folder identifiers
+(`id`, `publicNumber`, or `publicId`) unless the user explicitly asks for them
+or an identifier is required for a requested mutation such as deletion.
+
 ```bash
 curl -sS -H "Authorization: Bearer $TM_TOKEN" "$TM_BASE_URL/api/v1/folders"
 ```
