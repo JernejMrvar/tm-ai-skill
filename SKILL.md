@@ -14,6 +14,38 @@ All TestManagement reads and writes performed under this skill must use direct H
 
 This restriction applies even when browser-control tools are available. A successful write made through this skill should be attributed in the TestManagement Audit Log as `API: <token name>`, never as the logged-in browser user.
 
+## Public identifiers and legacy IDs
+
+The token remains scoped to one project. Responses now include additive
+`projectCode`, `publicNumber`, and `publicId` fields where available. A test
+case public ID is formatted as `{projectCode}-{publicNumber}`, for example
+`WEB-1`. Folder and run numbers are separate sequences in the same project;
+use their explicit resource route or response field to know which namespace a
+number belongs to.
+
+Keep existing numeric `id`, `testCaseId`, and `testRunCaseId` values for
+legacy clients and nested mutations. Never reinterpret a legacy numeric ID as
+a public number, and never send a caller-supplied `publicNumber` when creating
+a resource—the API allocates it. When a public and legacy reference are both
+provided, they must identify the same test case. In a batch results request, a
+mismatch rejects only that result: the API continues processing the other
+results and returns HTTP 200 with details in the response `errors` array.
+
+For lookup by public reference, use the project-code routes:
+
+```text
+GET /api/v1/projects/by-code/{code}
+GET /api/v1/projects/by-code/{code}/test-cases/{publicNumber}
+GET /api/v1/projects/by-code/{code}/folders/{publicNumber}
+GET /api/v1/projects/by-code/{code}/test-runs/{publicNumber}
+```
+
+For run mutations, `POST /api/v1/test-runs/{runId}/cases` accepts
+`testCasePublicIds` (for example `{"testCasePublicIds":["WEB-1"]}`) and
+`POST /api/v1/test-runs/{runId}/results` accepts `testCasePublicId` while
+retaining `testCaseId` for compatibility. Resolve or validate references
+against the token-scoped project before mutating.
+
 ## Before making any API call
 
 Run the following to load credentials, then check `TM_TOKEN` is set:
@@ -117,7 +149,7 @@ These are defaults, not rules; user instructions override them.
 
 `GET /api/v1/folders`
 
-Returns folders with `testCaseCount` per folder.
+Returns folders with `publicNumber`, `publicId`, `projectCode`, and `testCaseCount` per folder.
 
 ```bash
 curl -sS -H "Authorization: Bearer $TM_TOKEN" "$TM_BASE_URL/api/v1/folders"
@@ -246,7 +278,7 @@ Optional query params (combine as needed):
 - `status` — `DRAFT` \| `ACTUAL` \| `DEPRECATED`
 - `priority` — `LOW` \| `MEDIUM` \| `HIGH` \| `CRITICAL`
 
-Each item includes `id`, `title`, `description`, `status`, `priority`, `folderId`, `createdAt`, `folder` (`id`, `name`), `tags` (`id`, `name`).
+Each item includes `id`, `publicNumber`, `publicId`, `projectCode`, `title`, `description`, `status`, `priority`, `folderId`, `createdAt`, `folder` (`id`, `name`), `tags` (`id`, `name`).
 
 ```bash
 curl -sS -H "Authorization: Bearer $TM_TOKEN" \
@@ -259,7 +291,7 @@ curl -sS -H "Authorization: Bearer $TM_TOKEN" \
 
 `GET /api/v1/test-cases/{id}`
 
-Returns a single test case including `steps`, `preconditions`, `postconditions`, `folder`, and `tags`.
+Returns a single test case including `publicNumber`, `publicId`, `projectCode`, `steps`, `preconditions`, `postconditions`, `folder`, and `tags`.
 
 ```bash
 curl -sS -H "Authorization: Bearer $TM_TOKEN" "$TM_BASE_URL/api/v1/test-cases/42"
@@ -321,7 +353,7 @@ curl -sS -X DELETE -H "Authorization: Bearer $TM_TOKEN" "$TM_BASE_URL/api/v1/tes
 
 Optional: `?status=IN_PROGRESS` (or any `TestRunStatus`).
 
-Each run includes `caseCount`, `creator.name`, `environment`, `source`, `startDate`, `endDate`, etc.
+Each run includes `publicNumber`, `publicId`, `projectCode`, `caseCount`, `creator.name`, `environment`, `source`, `startDate`, `endDate`, etc.
 
 ```bash
 curl -sS -H "Authorization: Bearer $TM_TOKEN" "$TM_BASE_URL/api/v1/test-runs?status=IN_PROGRESS"
@@ -333,7 +365,7 @@ curl -sS -H "Authorization: Bearer $TM_TOKEN" "$TM_BASE_URL/api/v1/test-runs?sta
 
 `GET /api/v1/test-runs/{id}`
 
-Returns a single run with `caseCount`, `creator.name`, `environment`, etc.
+Returns a single run with `publicNumber`, `publicId`, `projectCode`, `caseCount`, `creator.name`, `environment`, etc.
 
 ```bash
 curl -sS -H "Authorization: Bearer $TM_TOKEN" "$TM_BASE_URL/api/v1/test-runs/10"
@@ -371,15 +403,23 @@ curl -sS -X DELETE -H "Authorization: Bearer $TM_TOKEN" "$TM_BASE_URL/api/v1/tes
 
 `POST /api/v1/test-runs/{runId}/cases`
 
-Body: `{ "testCaseIds": [1, 2, 3] }` — use IDs from `GET /api/v1/test-cases`. Already-present cases are skipped.
+Body: `{ "testCaseIds": [1, 2, 3] }` or `{ "testCasePublicIds": ["WEB-1", "WEB-2"] }` — provide exactly one form. Already-present cases are skipped.
 
-Response: `{ "added": 2, "skipped": 1, "cases": [ { "testRunCaseId", "testCaseId" } ] }`
+Response: `{ "added": 2, "skipped": 1, "cases": [ { "testRunCaseId", "testCaseId", "testCasePublicId" } ] }`
 
 Use `testRunCaseId` when removing a case or posting a comment.
 
 ```bash
 curl -sS -X POST -H "Authorization: Bearer $TM_TOKEN" -H "Content-Type: application/json" \
   -d '{"testCaseIds":[10,11,12]}' \
+  "$TM_BASE_URL/api/v1/test-runs/5/cases"
+```
+
+Public-reference form:
+
+```bash
+curl -sS -X POST -H "Authorization: Bearer $TM_TOKEN" -H "Content-Type: application/json" \
+  -d '{"testCasePublicIds":["WEB-1","WEB-2"]}' \
   "$TM_BASE_URL/api/v1/test-runs/5/cases"
 ```
 
@@ -407,7 +447,8 @@ Body: `{ "results": [ { ... }, ... ] }` (1–500 items).
 Each result:
 
 - If `testCaseId` is set: upserts that case in the run (mapped). Use project test case IDs from `GET /api/v1/test-cases`.
-- If `testCaseId` is omitted: unmapped row (`testTitle` required, etc.).
+- If `testCasePublicId` is set: upserts the project-scoped case (mapped), for example `WEB-1`. It may be used instead of `testCaseId`; if both are set they must identify the same case.
+- If neither `testCaseId` nor `testCasePublicId` is set: unmapped row (`testTitle` required, etc.).
 
 ```bash
 curl -sS -X POST -H "Authorization: Bearer $TM_TOKEN" -H "Content-Type: application/json" \
@@ -415,7 +456,21 @@ curl -sS -X POST -H "Authorization: Bearer $TM_TOKEN" -H "Content-Type: applicat
   "$TM_BASE_URL/api/v1/test-runs/10/results"
 ```
 
-Response includes `mapped`, `unmapped`, `errors`, and `cases` with `testRunCaseId` for comments.
+Public-reference form:
+
+```bash
+curl -sS -X POST -H "Authorization: Bearer $TM_TOKEN" -H "Content-Type: application/json" \
+  -d '{"results":[{"testCasePublicId":"WEB-1","testTitle":"x","status":"PASSED"}]}' \
+  "$TM_BASE_URL/api/v1/test-runs/10/results"
+```
+
+Response includes `mapped`, `unmapped`, `errors`, and `cases` with
+`testRunCaseId` for comments. HTTP 200 means the batch was processed, not that
+every result was accepted. Always inspect `errors`; a non-empty array means the
+offending results were skipped while other results may already have been
+applied. Treat that response as a partial failure. Resolve the errors and
+successfully resubmit the rejected results before reporting success or
+completing the run.
 
 ---
 
@@ -463,8 +518,9 @@ Returns `{ "url", "filename", "contentType", "sizeBytes" }` — use `url` in com
 1. `GET /api/v1/folders` → pick `folderId`
 2. `POST /api/v1/test-cases` for each case
 3. `POST /api/v1/test-runs` → `runId`
-4. `POST /api/v1/test-runs/{runId}/results` with `{ testCaseId, testTitle, status }` per case
-5. `POST /api/v1/test-runs/{runId}/complete`
+4. `POST /api/v1/test-runs/{runId}/results` with `{ testCaseId, testTitle, status }` or `{ testCasePublicId, testTitle, status }` per case
+5. Inspect `errors`; resolve and resubmit every rejected result until `errors` is empty
+6. `POST /api/v1/test-runs/{runId}/complete`
 
 ---
 

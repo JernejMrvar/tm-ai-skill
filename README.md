@@ -10,6 +10,7 @@ Point your AI tool at `SKILL.md` and it can:
 - List, create, edit, and delete project tags
 - List, get, create, update, and delete test cases (with steps, priority, tags, and folder placement)
 - List, get, create, and delete test runs
+- Use additive project-scoped public references such as `WEB-1` while retaining legacy numeric IDs
 - Add and remove individual cases from a test run
 - Report results in batch (pass/fail/blocked/skipped/flaky)
 - Add comments and screenshots to individual case results
@@ -22,6 +23,12 @@ All actions are scoped to the project your API token belongs to and are recorded
 This skill is deliberately API-only. Agents must use `$TM_BASE_URL/api/v1/*` with `TM_TOKEN` and must never fall back to the TestManagement browser UI, an authenticated browser session, or the session-based `/api/*` routes. If the token is missing, invalid, points at the wrong project, or the required v1 operation is unavailable, the agent stops and reports the problem instead of using browser credentials.
 
 This distinction matters because a browser may already be signed in as an administrator with access to multiple projects. Browser/session operations are authorized as that user rather than scoped by the API token.
+
+Public test-case references use the distinct `PROJECTCODE-N` form (for
+example `WEB-1`). Use `/api/v1/projects/by-code/{code}/...` for explicit
+lookups, `testCasePublicIds` when adding cases to a run, and
+`testCasePublicId` when reporting results. Keep legacy numeric IDs for
+compatibility and never supply `publicNumber` on create requests.
 
 The installer downloads `SKILL.md` into `~/.codex/tm-api.md`,
 `~/.claude/tm-api.md`, and `~/.cursor/rules/tm-api.md`; endpoint documentation
