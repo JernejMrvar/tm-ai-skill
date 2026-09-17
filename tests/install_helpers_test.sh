@@ -158,4 +158,50 @@ assert_not_contains 'tm_old_literal' "$CONFIG_FILE" "Windows config contains no 
 bash -n "$CONFIG_FILE"
 assert_eq "0" "$?" "Windows generated config is bash-compatible"
 
+# --- SemVer comparison (matching semver.org's canonical precedence chain) --
+
+assert_eq "0" "$(semver_compare 1.0.0 1.0.0)" "semver_compare: equal versions"
+assert_eq "-1" "$(semver_compare 1.0.0 2.0.0)" "semver_compare: lower major"
+assert_eq "1" "$(semver_compare 2.1.1 2.1.0)" "semver_compare: higher patch"
+assert_eq "0" "$(semver_compare 1.0.0+build1 1.0.0+build2)" "semver_compare: build metadata never affects precedence"
+assert_eq "-1" "$(semver_compare 1.0.0-alpha 1.0.0)" "semver_compare: a prerelease is lower than the same release"
+
+# 1.0.0-alpha < 1.0.0-alpha.1 < 1.0.0-alpha.beta < 1.0.0-beta < 1.0.0-beta.2
+#   < 1.0.0-beta.11 < 1.0.0-rc.1 < 1.0.0
+chain=(1.0.0-alpha 1.0.0-alpha.1 1.0.0-alpha.beta 1.0.0-beta 1.0.0-beta.2 1.0.0-beta.11 1.0.0-rc.1 1.0.0)
+chain_len=${#chain[@]}
+for ((i = 0; i < chain_len - 1; i++)); do
+  assert_eq "-1" "$(semver_compare "${chain[$i]}" "${chain[$((i + 1))]}")" \
+    "semver_compare: ${chain[$i]} < ${chain[$((i + 1))]} (SemVer spec chain)"
+done
+
+assert_eq "0" "$(is_stable_semver 1.2.3; echo $?)" "is_stable_semver accepts a plain X.Y.Z"
+assert_eq "1" "$(is_stable_semver 1.2.3-rc.1; echo $?)" "is_stable_semver rejects a prerelease"
+
+# --- Deployment URL validation/canonicalization -----------------------------
+
+assert_eq "0" "$(validate_deployment_url https://example.com; echo $?)" "validate_deployment_url accepts https"
+assert_eq "0" "$(validate_deployment_url http://localhost:3000; echo $?)" "validate_deployment_url accepts loopback http"
+assert_eq "1" "$(validate_deployment_url http://evil.example.com; echo $?)" "validate_deployment_url rejects non-loopback http"
+assert_eq "1" "$(validate_deployment_url https://user@example.com; echo $?)" "validate_deployment_url rejects userinfo"
+assert_eq "1" "$(validate_deployment_url 'https://example.com/a?x=1'; echo $?)" "validate_deployment_url rejects a query string"
+assert_eq "https://example.com" "$(canonicalize_deployment_url 'HTTPS://Example.COM:443/')" "canonicalize_deployment_url lowercases and strips the default port/trailing slash"
+
+# --- Immutable artifact URL check -------------------------------------------
+
+assert_eq "0" "$(is_immutable_https_url https://github.com/x/y/releases/download/v1/a.tar.gz; echo $?)" "is_immutable_https_url accepts a pinned release asset URL"
+assert_eq "1" "$(is_immutable_https_url https://github.com/x/y/releases/download/main/a.tar.gz; echo $?)" "is_immutable_https_url rejects a /main/ URL"
+assert_eq "1" "$(is_immutable_https_url http://github.com/x/y/releases/download/v1/a.tar.gz; echo $?)" "is_immutable_https_url rejects a plain http URL"
+
+# --- Installation UUID format ------------------------------------------------
+
+uuid="$(generate_uuid)"
+if [[ "$uuid" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$ ]]; then
+  pass_count=$((pass_count + 1))
+  printf 'ok - generate_uuid produces a lowercase RFC4122 v4 UUID\n'
+else
+  printf 'not ok - generate_uuid produces a lowercase RFC4122 v4 UUID\nactual: %s\n' "$uuid" >&2
+  exit 1
+fi
+
 printf '1..%d\n' "$pass_count"
