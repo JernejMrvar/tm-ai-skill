@@ -26,7 +26,11 @@ OUT_DIR="${2:-dist}"
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
-RESOLVED_SHA="$(git rev-parse "$REF")"
+# `^{commit}` peels an annotated tag down to the commit it points at — a
+# bare `git rev-parse "$REF"` on an annotated tag instead returns the tag
+# *object's* own SHA, which would then be recorded as the manifest's
+# "commit" and point at the wrong object type.
+RESOLVED_SHA="$(git rev-parse "${REF}^{commit}")"
 
 # Everything this repo currently distributes to Codex/Claude Code/Cursor.
 # Update this list deliberately when the packaged file set changes.
@@ -35,6 +39,14 @@ ALLOWED_FILES=(install.sh SKILL.md README.md VERSION)
 VERSION="$(git show "$REF:VERSION" 2>/dev/null || true)"
 if [ -z "$VERSION" ]; then
   echo "error: VERSION file not found at ref $REF" >&2
+  exit 1
+fi
+# Plain X.Y.Z only — this repo's own releases are never prereleases, and
+# TestManagementProject's promoted-manifest schema requires a genuine stable
+# SemVer string for every version field. Reject garbage (e.g. "banana")
+# before it can be packaged and published under a matching bad tag.
+if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+  echo "error: VERSION '$VERSION' at ref $REF is not a plain X.Y.Z SemVer string" >&2
   exit 1
 fi
 

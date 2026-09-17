@@ -20,6 +20,18 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Refuse to republish an already-published release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "error: release $GITHUB_REF_NAME already exists — a release is never republished." >&2
+            echo "       action-gh-release overwrites same-named assets by default; moving this tag" >&2
+            echo "       and rerunning would replace bytes at an already-promoted, pinned-checksum URL." >&2
+            echo "       Cut a new version instead." >&2
+            exit 1
+          fi
+
       - name: Verify the tag matches the VERSION file
         run: |
           tag_version="${GITHUB_REF_NAME#v}"

@@ -11,6 +11,36 @@ today's `install.sh` still downloads `SKILL.md` from `main` with no
 release/reporting flow. This document only covers packaging what already
 exists.
 
+## Repository setup (already applied)
+
+Two live GitHub repository settings — outside this repo's version control —
+protect published releases against replacement, so a moved tag and a rerun
+publication can never replace bytes at an already-promoted, pinned-checksum
+URL:
+
+1. **Tag protection** — a repository ruleset ("Protect release tags")
+   targets tags matching `v*` with the `deletion`, `update`, and
+   `non_fast_forward` rules active, so a published release tag can never be
+   deleted or moved onto a different commit.
+2. **Immutable releases** — enabled for this repository
+   (`PUT /repos/{owner}/{repo}/immutable-releases`). Every new release's
+   assets and tag are locked by GitHub itself once published; existing
+   releases at the time this was enabled are unaffected unless republished.
+
+Verify either setting with:
+```bash
+gh api repos/<owner>/tm-ai-skill/immutable-releases
+gh api repos/<owner>/tm-ai-skill/rulesets
+```
+If this repo is ever transferred or recreated, redo both — they are
+repository settings, not files this repo's git history carries.
+
+`.github/workflows/release.yml`'s own "Refuse to republish an already-
+published release" step is defense in depth for this same property (it
+fails the workflow if `gh release view` finds the tag already published,
+since `action-gh-release` otherwise overwrites same-named assets by
+default) — it is not a substitute for the two settings above.
+
 ## Versioning
 
 `VERSION` at the repo root is the single source of truth for this repo's
@@ -32,12 +62,15 @@ in-progress edit can never be packaged by accident.
    git tag vX.Y.Z <commit>
    git push origin vX.Y.Z
    ```
-3. `.github/workflows/release.yml` triggers on the tag push. It verifies the
-   tag matches `VERSION`, runs the test suite, packages the tag with
-   `scripts/package-release.sh`, and publishes a numbered GitHub Release
-   (`releases/tag/vX.Y.Z`) with the tarball and its manifest attached as
-   immutable assets. **Never** reference a `main`/`latest` URL as a release
-   artifact — always the numbered tag's asset URL, e.g.:
+3. `.github/workflows/release.yml` triggers on the tag push. It refuses to
+   run if `vX.Y.Z` is already published, verifies the tag matches `VERSION`
+   (itself validated as a plain `X.Y.Z` SemVer string), runs the test suite,
+   packages the tag with `scripts/package-release.sh`, and publishes a
+   numbered GitHub Release (`releases/tag/vX.Y.Z`) with the tarball and its
+   manifest attached. With the one-time repo settings above in place, those
+   assets and the tag are then immutable. **Never** reference a
+   `main`/`latest` URL as a release artifact — always the numbered tag's
+   asset URL, e.g.:
    ```text
    https://github.com/<owner>/tm-ai-skill/releases/download/vX.Y.Z/tm-ai-skill-X.Y.Z.tar.gz
    ```

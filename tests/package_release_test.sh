@@ -112,4 +112,34 @@ else
   ok "packaging a ref without a VERSION file fails closed"
 fi
 
+# A non-SemVer VERSION content must fail closed, even if a matching (equally
+# bogus) tag name was used for it — string equality between tag and VERSION
+# is not proof the version itself is well-formed.
+git -C "$REPO" checkout -q -b bad-version v0.1.0
+printf 'banana' >"$REPO/VERSION"
+git -C "$REPO" add VERSION
+git -C "$REPO" commit -q -m "break VERSION"
+git -C "$REPO" tag vbanana
+
+if "$REPO/scripts/package-release.sh" vbanana "$REPO/dist" >/dev/null 2>&1; then
+  fail "packaging a non-SemVer VERSION must fail"
+else
+  ok "packaging a non-SemVer VERSION fails closed"
+fi
+
+# An annotated tag must resolve to the commit it points at, not the tag
+# object's own SHA, in the manifest's "commit" field.
+git -C "$REPO" checkout -q v0.1.0
+git -C "$REPO" tag -a v0.1.0-annotated -m "annotated release tag"
+EXPECTED_COMMIT="$(git -C "$REPO" rev-parse v0.1.0-annotated^{commit})"
+
+"$REPO/scripts/package-release.sh" v0.1.0-annotated "$REPO/dist-annotated" >/dev/null 2>&1
+RECORDED_COMMIT="$(grep -o '"commit": "[^"]*"' "$REPO/dist-annotated/tm-ai-skill-0.1.0.manifest.json" | cut -d'"' -f4)"
+
+if [ "$RECORDED_COMMIT" = "$EXPECTED_COMMIT" ]; then
+  ok "an annotated tag's manifest records the commit it points at, not the tag object"
+else
+  fail "an annotated tag's manifest records the commit it points at, not the tag object"
+fi
+
 echo "1..$pass_count"
