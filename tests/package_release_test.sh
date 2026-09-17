@@ -127,6 +127,21 @@ else
   ok "packaging a non-SemVer VERSION fails closed"
 fi
 
+# A leading zero in any component violates SemVer spec item 2
+# (https://semver.org/#spec-item-2) even though it matches a naive
+# [0-9]+ regex — "01.2.3" must be rejected, not just non-digit garbage.
+git -C "$REPO" checkout -q -b leading-zero-version v0.1.0
+printf '01.2.3' >"$REPO/VERSION"
+git -C "$REPO" add VERSION
+git -C "$REPO" commit -q -m "introduce a leading-zero version"
+git -C "$REPO" tag v01.2.3
+
+if "$REPO/scripts/package-release.sh" v01.2.3 "$REPO/dist" >/dev/null 2>&1; then
+  fail "packaging a VERSION with a leading zero must fail"
+else
+  ok "packaging a VERSION with a leading zero fails closed"
+fi
+
 # An annotated tag must resolve to the commit it points at, not the tag
 # object's own SHA, in the manifest's "commit" field.
 git -C "$REPO" checkout -q v0.1.0

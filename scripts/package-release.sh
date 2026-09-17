@@ -44,9 +44,14 @@ fi
 # Plain X.Y.Z only — this repo's own releases are never prereleases, and
 # TestManagementProject's promoted-manifest schema requires a genuine stable
 # SemVer string for every version field. Reject garbage (e.g. "banana")
-# before it can be packaged and published under a matching bad tag.
-if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-  echo "error: VERSION '$VERSION' at ref $REF is not a plain X.Y.Z SemVer string" >&2
+# before it can be packaged and published under a matching bad tag. Each
+# component must be "0" or a digit sequence with no leading zero (SemVer
+# spec item 2: https://semver.org/#spec-item-2) — a plain [0-9]+ would wrongly
+# accept "01.2.3", which packages and tags successfully here but is then
+# rejected by TestManagementProject's manifest validator at promotion time.
+SEMVER_COMPONENT='(0|[1-9][0-9]*)'
+if ! [[ "$VERSION" =~ ^${SEMVER_COMPONENT}\.${SEMVER_COMPONENT}\.${SEMVER_COMPONENT}$ ]]; then
+  echo "error: VERSION '$VERSION' at ref $REF is not a plain X.Y.Z SemVer string (no leading zeros)" >&2
   exit 1
 fi
 
