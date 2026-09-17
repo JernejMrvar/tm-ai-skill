@@ -192,13 +192,14 @@ modes, the `jq` dependency, and what the installer now actually consumes.
   - `tests/package_release_test.sh` — 12/12 (unmodified; this PR didn't
     touch packaging, since no new files needed to enter the distributed
     bundle — `bootstrap.sh` deliberately isn't part of it).
-  - `tests/release_and_report_test.sh` (new) — 44/44: release-manifest
+  - `tests/release_and_report_test.sh` (new) — 51/51: release-manifest
     validation against realistic POV-30 fixtures (`release: null`, a valid
     envelope, an incompatible `tmApiContractVersion`); fail-closed handling
     for unavailable, malformed, and incomplete manifests; a full install →
     update (no-op) → locally-edited-skip → reconfigure-overwrite cycle
-    against a *real* HTTP download/digest/extract/stage/commit round trip
-    via a local fixture server (`tests/fixtures/fake_tm_server.py`); digest-
+    against a *real* HTTP download/digest/extract/stage/commit round trip,
+    including failed-staging preservation, via a local fixture server
+    (`tests/fixtures/fake_tm_server.py`); digest-
     mismatch and archive-safety (path-traversal, symlink) rejection with no
     file ever written, using archives built byte-for-byte with Python's
     `tarfile` module (`tests/fixtures/make_archive.py`) so the malicious

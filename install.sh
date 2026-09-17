@@ -42,6 +42,8 @@ OPT_BASE_URL=""
 OPT_DISPLAY_NAME=""
 OPT_SWITCH_ACCOUNT=0
 OPT_TARGETS=""
+OPT_RELEASE_SNAPSHOT=""
+OPT_RELEASE_SNAPSHOT_SET=0
 OPT_YES=0
 
 CRED_KIND=""
@@ -67,6 +69,7 @@ RELEASE_TARGET_SIZE=""
 
 TARGET_RESULTS_FILE=""
 LAST_WRITE_FAILURE_CODE="UNKNOWN_ERROR"
+STAGED_TARGET_PATH=""
 REPORT_HTTP_CODE=""
 REPORT_RESPONSE_BODY=""
 REPORT_DELIVERED=0
@@ -113,6 +116,9 @@ Options:
   --display-name=NAME  Human-readable label for this installation (e.g. "My laptop").
   --switch-account     Required to replace a stored credential for a different account.
   --target=LIST        Comma-separated subset of: codex,claude,cursor (default: all three).
+  --release-snapshot=JSON
+                       Use this exact validated release envelope instead of
+                       fetching the deployment's current manifest (bootstrap only).
   --yes                Skip non-essential interactive confirmations.
   -h, --help           Show this help.
 
@@ -1187,12 +1193,33 @@ ensure_registration() {
 }
 
 stage_target() {
-  local target="$1" src="$2" content_path staged
+  local target="$1" src="$2" content_path staged cp_error
+  LAST_WRITE_FAILURE_CODE="UNKNOWN_ERROR"
+  STAGED_TARGET_PATH=""
   content_path="$(target_content_path "$target")"
-  mkdir -p "$(dirname "$content_path")" 2>/dev/null || true
-  staged="$(mktemp "${content_path}.XXXXXX.staged" 2>/dev/null || mktemp)"
-  cp "$src" "$staged"
-  chmod 600 "$staged" 2>/dev/null || true
+  if ! mkdir -p "$(dirname "$content_path")" 2>/dev/null; then
+    LAST_WRITE_FAILURE_CODE="WRITE_PERMISSION_DENIED"
+    return 1
+  fi
+  if ! staged="$(mktemp "${content_path}.staged.XXXXXX" 2>/dev/null)"; then
+    LAST_WRITE_FAILURE_CODE="WRITE_PERMISSION_DENIED"
+    return 1
+  fi
+  if ! cp_error="$(cp "$src" "$staged" 2>&1)"; then
+    case "$cp_error" in
+      *"No space left"*) LAST_WRITE_FAILURE_CODE="DISK_FULL" ;;
+      *"Permission denied"*) LAST_WRITE_FAILURE_CODE="WRITE_PERMISSION_DENIED" ;;
+      *) LAST_WRITE_FAILURE_CODE="UNKNOWN_ERROR" ;;
+    esac
+    rm -f "$staged" 2>/dev/null
+    return 1
+  fi
+  if ! chmod 600 "$staged" 2>/dev/null; then
+    LAST_WRITE_FAILURE_CODE="WRITE_PERMISSION_DENIED"
+    rm -f "$staged" 2>/dev/null
+    return 1
+  fi
+  STAGED_TARGET_PATH="$staged"
   printf '%s' "$staged"
 }
 
@@ -1312,6 +1339,24 @@ validate_release() {
   return 0
 }
 
+# A Settings-generated bootstrap command carries the exact release envelope
+# that was selected when the command was copied. In that mode, validate and
+# retain the supplied snapshot before any credential write, then use it
+# directly for target sync — never fetch a newer manifest and never enter the
+# explicit-no-release legacy fallback.
+validate_release_snapshot() {
+  [ "$OPT_RELEASE_SNAPSHOT_SET" = "1" ] || return 0
+  if [ -z "$OPT_RELEASE_SNAPSHOT" ] || ! validate_release "$OPT_RELEASE_SNAPSHOT"; then
+    echo "Error: the supplied release snapshot is invalid." >&2
+    return 1
+  fi
+  if [ "$RELEASE_PRESENT" != "1" ] || [ "$RELEASE_COMPATIBLE" != "1" ]; then
+    echo "Error: the supplied release snapshot is absent or incompatible." >&2
+    return 1
+  fi
+  return 0
+}
+
 # Resolves target $1's artifact from the already-validated RELEASE_JSON.
 # Requires exactly one "bundle" artifact for the target with a valid
 # immutable https URL, 64-hex sha256, and positive size — never picks the
@@ -1411,7 +1456,12 @@ sync_targets_legacy() {
   for t in $targets; do
     tmp="$(mktemp)"
     if curl -fsSL --max-time 30 -o "$tmp" "$SKILL_URL" 2>/dev/null; then
-      staged="$(stage_target "$t" "$tmp")"
+      if ! stage_target "$t" "$tmp" >/dev/null || [ -z "$STAGED_TARGET_PATH" ]; then
+        rm -f "$tmp"
+        append_target_result "$t" "failed" "" "" "$LAST_WRITE_FAILURE_CODE"
+        continue
+      fi
+      staged="$STAGED_TARGET_PATH"
       rm -f "$tmp"
       if commit_target "$t" "$staged"; then
         append_target_result "$t" "success" "" "" ""
@@ -1504,7 +1554,11 @@ sync_targets_release() {
     fi
 
     local staged
-    staged="$(stage_target "$t" "$skill_md")"
+    if ! stage_target "$t" "$skill_md" >/dev/null || [ -z "$STAGED_TARGET_PATH" ]; then
+      append_target_result "$t" "failed" "" "$version" "$LAST_WRITE_FAILURE_CODE"
+      continue
+    fi
+    staged="$STAGED_TARGET_PATH"
     if commit_target "$t" "$staged"; then
       local digest
       digest="$(sha256_file "$content_path")"
@@ -1734,6 +1788,10 @@ run_configure_and_install() {
   base_url="$(canonicalize_deployment_url "$base_url")"
   credential_target "$base_url" >/dev/null
 
+  if ! validate_release_snapshot; then
+    exit 2
+  fi
+
   local candidate_token
   candidate_token="$(acquire_candidate_token "$base_url")" || exit 1
 
@@ -1768,7 +1826,11 @@ run_configure_and_install() {
   local targets local_state_dir
   targets="$(resolve_target_list)"
   local_state_dir="$(local_version_state_dir "$base_url")"
-  sync_targets_from_manifest "$mode" "$targets" "$local_state_dir" "$base_url"
+  if [ "$OPT_RELEASE_SNAPSHOT_SET" = "1" ]; then
+    sync_targets_release "$mode" "$targets" "$local_state_dir"
+  else
+    sync_targets_from_manifest "$mode" "$targets" "$local_state_dir" "$base_url"
+  fi
 
   local cred_verification_result="not_checked" cred_verification_failure=""
   if [ "$CRED_KIND" = "personal" ]; then
@@ -1986,6 +2048,7 @@ parse_args() {
       --display-name=*) OPT_DISPLAY_NAME="${arg#--display-name=}" ;;
       --switch-account) OPT_SWITCH_ACCOUNT=1 ;;
       --target=*) OPT_TARGETS="${arg#--target=}" ;;
+      --release-snapshot=*) OPT_RELEASE_SNAPSHOT="${arg#--release-snapshot=}"; OPT_RELEASE_SNAPSHOT_SET=1 ;;
       --yes) OPT_YES=1 ;;
       -h|--help) print_usage; exit 0 ;;
       --token*|-t)
@@ -2007,9 +2070,27 @@ main() {
   case "$MODE" in
     install) run_configure_and_install "install" ;;
     reconfigure) run_configure_and_install "reconfigure" ;;
-    update) mode_update ;;
-    check) mode_check ;;
-    retry-report) mode_retry_report ;;
+    update)
+      if [ "$OPT_RELEASE_SNAPSHOT_SET" = "1" ]; then
+        echo "Error: --release-snapshot is only supported for install/reconfigure bootstrap handoff." >&2
+        exit 2
+      fi
+      mode_update
+      ;;
+    check)
+      if [ "$OPT_RELEASE_SNAPSHOT_SET" = "1" ]; then
+        echo "Error: --release-snapshot is only supported for install/reconfigure bootstrap handoff." >&2
+        exit 2
+      fi
+      mode_check
+      ;;
+    retry-report)
+      if [ "$OPT_RELEASE_SNAPSHOT_SET" = "1" ]; then
+        echo "Error: --release-snapshot is only supported for install/reconfigure bootstrap handoff." >&2
+        exit 2
+      fi
+      mode_retry_report
+      ;;
     *)
       echo "Error: unknown mode '$MODE'" >&2
       exit 2

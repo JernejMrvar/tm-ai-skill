@@ -203,6 +203,40 @@ release_target_available codex
 assert_eq "9.9.9" "$RELEASE_TARGET_VERSION" "codex artifact resolves the advertised version"
 assert_eq "$VALID_SHA256" "$RELEASE_TARGET_SHA256" "codex artifact resolves the advertised sha256"
 
+# A Settings-generated command carries the release envelope selected at copy
+# time. If promotion changes before execution, the installer must use that
+# supplied snapshot and must not fetch the current manifest (which could be
+# null and otherwise enter the unpinned legacy path).
+snapshot_manifest_called="$TMP_ROOT/snapshot-manifest-called"
+snapshot_legacy_called="$TMP_ROOT/snapshot-legacy-called"
+snapshot_results="$TMP_ROOT/snapshot.results"
+snapshot_state="$TMP_ROOT/snapshot-state"
+(
+  OPT_RELEASE_SNAPSHOT="$envelope"
+  OPT_RELEASE_SNAPSHOT_SET=1
+  TARGET_RESULTS_FILE="$snapshot_results"
+  fetch_release_manifest() {
+    : > "$snapshot_manifest_called"
+    printf '%s' '{"schemaVersion":1,"release":null}'
+  }
+  sync_targets_legacy() { : > "$snapshot_legacy_called"; }
+  validate_release_snapshot
+  if [ "$OPT_RELEASE_SNAPSHOT_SET" = "1" ]; then
+    sync_targets_release "install" "claude" "$snapshot_state"
+  else
+    sync_targets_from_manifest "install" "claude" "$snapshot_state" "$BASE_URL"
+  fi
+)
+assert_file_missing "$snapshot_manifest_called" \
+  "a supplied release snapshot never fetches a newly promoted manifest"
+assert_file_missing "$snapshot_legacy_called" \
+  "a supplied release snapshot never enters the unpinned legacy fallback"
+assert_eq "success" "$(jq -r '.result' "$snapshot_results")" \
+  "a supplied release snapshot installs the selected artifact"
+assert_eq "9.9.9" "$(jq -r '.observedVersion' "$snapshot_results")" \
+  "a supplied release snapshot preserves the selected target version"
+rm -rf "$HOME/.claude" "$snapshot_state"
+
 incompatible_envelope="$(make_release_envelope "$VALID_SHA256" "$VALID_SIZE" 99)"
 validate_release "$incompatible_envelope"
 assert_eq "1" "$RELEASE_PRESENT" "an incompatible release is still present"
@@ -325,6 +359,20 @@ TARGET_RESULTS_FILE="$(mktemp)"
 sync_targets_release "reconfigure" "codex" "$STATE_DIR"
 assert_eq "success" "$(jq -r '.result' "$TARGET_RESULTS_FILE")" "reconfigure overwrites a locally edited target on purpose"
 assert_contains "fixture skill content" "$(cat "$HOME/.codex/tm-api.md")" "reconfigure restores the packaged content"
+
+# A failed staging copy must be reported before commit_target is reached, so
+# an existing installation cannot be replaced with a truncated/empty file.
+STAGING_ORIGINAL_CONTENT="$(cat "$HOME/.codex/tm-api.md")"
+TARGET_RESULTS_FILE="$(mktemp)"
+cp() {
+  : > "$2"
+  return 1
+}
+sync_targets_release "install" "codex" "$STATE_DIR"
+unset -f cp
+assert_eq "failed" "$(jq -r '.result' "$TARGET_RESULTS_FILE")" "a failed staging copy reports a target failure"
+assert_eq "UNKNOWN_ERROR" "$(jq -r '.failureCode' "$TARGET_RESULTS_FILE")" "a failed staging copy uses a supported failure code"
+assert_eq "$STAGING_ORIGINAL_CONTENT" "$(cat "$HOME/.codex/tm-api.md")" "a failed staging copy preserves the installed file"
 
 # =============================================================================
 # digest mismatch on a fresh target install: no file is written
