@@ -32,13 +32,26 @@ cd "$ROOT_DIR"
 # "commit" and point at the wrong object type.
 RESOLVED_SHA="$(git rev-parse "${REF}^{commit}")"
 
+# $REF must name something immutable. A branch (or HEAD) can advance
+# between this point and the `git show`/`git archive` calls below — package
+# and record from RESOLVED_SHA everywhere after this, never $REF again, so
+# the manifest's "commit" can never describe different bytes than what was
+# actually archived.
+if git show-ref --verify --quiet "refs/heads/$REF" ||
+  git show-ref --verify --quiet "refs/remotes/origin/$REF" ||
+  [ "$REF" = "HEAD" ]; then
+  echo "error: '$REF' is a branch (or HEAD), not a pinned tag/commit" >&2
+  echo "       packaging must reference an immutable ref that cannot move mid-run" >&2
+  exit 1
+fi
+
 # Everything this repo currently distributes to Codex/Claude Code/Cursor.
 # Update this list deliberately when the packaged file set changes.
 ALLOWED_FILES=(install.sh SKILL.md README.md VERSION)
 
-VERSION="$(git show "$REF:VERSION" 2>/dev/null || true)"
+VERSION="$(git show "$RESOLVED_SHA:VERSION" 2>/dev/null || true)"
 if [ -z "$VERSION" ]; then
-  echo "error: VERSION file not found at ref $REF" >&2
+  echo "error: VERSION file not found at $REF ($RESOLVED_SHA)" >&2
   exit 1
 fi
 # Plain X.Y.Z only — this repo's own releases are never prereleases, and
@@ -51,7 +64,7 @@ fi
 # rejected by TestManagementProject's manifest validator at promotion time.
 SEMVER_COMPONENT='(0|[1-9][0-9]*)'
 if ! [[ "$VERSION" =~ ^${SEMVER_COMPONENT}\.${SEMVER_COMPONENT}\.${SEMVER_COMPONENT}$ ]]; then
-  echo "error: VERSION '$VERSION' at ref $REF is not a plain X.Y.Z SemVer string (no leading zeros)" >&2
+  echo "error: VERSION '$VERSION' at $REF ($RESOLVED_SHA) is not a plain X.Y.Z SemVer string (no leading zeros)" >&2
   exit 1
 fi
 
@@ -61,8 +74,9 @@ ARCHIVE_PATH="$OUT_DIR/$ARCHIVE_NAME"
 PREFIX="tm-ai-skill-${VERSION}/"
 
 # `git archive` errors out non-zero if any listed path doesn't exist at
-# $REF, so a ref missing one of the expected payload files also fails here.
-git archive --format=tar --prefix="$PREFIX" "$REF" -- "${ALLOWED_FILES[@]}" |
+# $RESOLVED_SHA, so a ref missing one of the expected payload files also
+# fails here.
+git archive --format=tar --prefix="$PREFIX" "$RESOLVED_SHA" -- "${ALLOWED_FILES[@]}" |
   gzip -9 >"$ARCHIVE_PATH"
 
 # Verify what actually landed in the archive is exactly the allowlist, no

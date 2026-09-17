@@ -157,4 +157,23 @@ else
   fail "an annotated tag's manifest records the commit it points at, not the tag object"
 fi
 
+# A branch name (or HEAD) must be rejected outright — it can advance between
+# the initial rev-parse and the later git show/archive calls, letting the
+# manifest's recorded commit describe different bytes than what was
+# actually archived. This is a stronger guarantee than "resolve once and
+# reuse the SHA": a branch is never an acceptable packaging input at all.
+git -C "$REPO" checkout -q -b a-real-branch v0.1.0
+
+if "$REPO/scripts/package-release.sh" a-real-branch "$REPO/dist" >/dev/null 2>&1; then
+  fail "packaging a branch name must fail"
+else
+  ok "packaging a branch name fails closed"
+fi
+
+if "$REPO/scripts/package-release.sh" HEAD "$REPO/dist" >/dev/null 2>&1; then
+  fail "packaging HEAD must fail"
+else
+  ok "packaging HEAD fails closed"
+fi
+
 echo "1..$pass_count"

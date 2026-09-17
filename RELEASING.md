@@ -36,10 +36,14 @@ If this repo is ever transferred or recreated, redo both — they are
 repository settings, not files this repo's git history carries.
 
 `.github/workflows/release.yml`'s own "Refuse to republish an already-
-published release" step is defense in depth for this same property (it
-fails the workflow if `gh release view` finds the tag already published,
-since `action-gh-release` otherwise overwrites same-named assets by
-default) — it is not a substitute for the two settings above.
+published release" step is defense in depth for this same property — it
+fails the workflow only if `gh release view` finds the tag's release
+already **published** (`action-gh-release` otherwise overwrites same-named
+assets by default). An unpublished draft is allowed to proceed and resume,
+since `action-gh-release` creates a draft before uploading assets and a
+draft was never promoted anywhere — this lets a rerun recover from an
+interrupted upload without ever blocking on its own leftover state. Neither
+check is a substitute for the two settings above.
 
 ## Versioning
 

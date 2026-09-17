@@ -24,12 +24,23 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            echo "error: release $GITHUB_REF_NAME already exists — a release is never republished." >&2
-            echo "       action-gh-release overwrites same-named assets by default; moving this tag" >&2
-            echo "       and rerunning would replace bytes at an already-promoted, pinned-checksum URL." >&2
-            echo "       Cut a new version instead." >&2
-            exit 1
+          # action-gh-release creates the release as a draft before uploading
+          # assets, then publishes it — so an interrupted run (e.g. an asset
+          # upload failure) leaves an unpublished draft behind. That draft
+          # was never promoted anywhere (no checksum was ever advertised for
+          # it), so resuming it on rerun is safe; only a *published* release
+          # for this tag must block a rerun, since only that could already
+          # have a promoted, pinned-checksum URL.
+          if release_json=$(gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --json isDraft 2>/dev/null); then
+            is_draft=$(echo "$release_json" | jq -r '.isDraft')
+            if [ "$is_draft" != "true" ]; then
+              echo "error: release $GITHUB_REF_NAME already exists and is published — a release is never republished." >&2
+              echo "       action-gh-release overwrites same-named assets by default; moving this tag" >&2
+              echo "       and rerunning would replace bytes at an already-promoted, pinned-checksum URL." >&2
+              echo "       Cut a new version instead." >&2
+              exit 1
+            fi
+            echo "note: resuming existing unpublished draft release for $GITHUB_REF_NAME"
           fi
 
       - name: Verify the tag matches the VERSION file
