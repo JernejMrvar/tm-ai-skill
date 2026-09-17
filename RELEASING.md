@@ -4,12 +4,20 @@ This covers **publishing** a versioned installer/skill release from this
 repository — packaging, checksums, and a GitHub Release. It does not cover
 **promoting** a published release into a live TestManagement deployment,
 which is a separate, reviewed step in the `TestManagementProject` repo (see
-"Promote" below). Installer command handling, staged downloads, client-side
-digest verification, and reporting installation observations to
-TestManagement are POV-31's scope and are not implemented in this repo yet —
-today's `install.sh` still downloads `SKILL.md` from `main` with no
-release/reporting flow. This document only covers packaging what already
-exists.
+"Promote" below).
+
+`install.sh` (POV-31) now consumes a promoted release when one exists:
+staged download/digest/archive-safety verification, atomic per-target file
+replacement with local version tracking, and self-reported installation
+observations to `POST /api/v1/skill-installations/report` for personal
+(`tmp_`) keys. `install`/`reconfigure` fall back to the previous unpinned
+`SKILL.md` download from `main` only when a successfully validated manifest
+explicitly reports that no release is promoted — which is still true for
+every current production deployment (`config/ai-skill-release.json` ships
+`"release": null`). Network, malformed, and incompatible manifests fail
+closed without replacing installed files. See
+[`docs/POV-31-install-update-reporting.md`](docs/POV-31-install-update-reporting.md)
+for what was implemented and tested versus what remains open.
 
 ## Repository setup (already applied)
 
@@ -109,12 +117,14 @@ exact, already-verified metadata to `config/ai-skill-release.json` in
    - `artifacts` — one entry per target (`codex`, `claude`, `cursor`), all
      three pointing at the same tarball's URL/sha256/sizeBytes, since there
      is only one payload.
-3. **Do not** set `contractVersions.reportContractVersion` /
-   `manifestContractVersion` to values implying personal-key/installation-
-   reporting support until POV-31 actually ships that client behavior in
-   this repo. A baseline release of the current legacy installer must only
-   claim its actual legacy capabilities — never the new contract ahead of
-   the code that implements it.
+3. `contractVersions.reportContractVersion` / `manifestContractVersion` /
+   `tmApiContractVersion` should match what the packaged `install.sh`
+   actually implements (see this repo's `SUPPORTED_REPORT_CONTRACT_VERSION`
+   / `SUPPORTED_MANIFEST_CONTRACT_VERSION` / `SUPPORTED_TM_API_CONTRACT_VERSION`
+   constants at the top of `install.sh`) — never a value implying support
+   the packaged code doesn't actually have yet. Bump the packaged
+   `install.sh`'s constants and this repo's `VERSION` together before a
+   manifest commit claims a higher contract version.
 4. Get that manifest commit reviewed and deployed like any other change.
    There is no separate "activation" step: `GET /api/v1/skill-release` reads
    the bundled file directly, and Settings recomputes version-comparison

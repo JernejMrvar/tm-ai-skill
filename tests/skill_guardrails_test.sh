@@ -49,4 +49,15 @@ assert_contains 'before reporting success or' 'skill blocks success reporting af
 assert_contains 'completing the run' 'skill blocks run completion after partial failure'
 assert_before '## Mandatory API-only guardrail' '## Before making any API call' 'guardrail appears before operational instructions'
 
+assert_contains '## Personal API keys and deliberate project selection' 'skill defines the personal-key project-selection section'
+assert_contains 'send an explicit' 'skill requires an explicit project header'
+assert_contains '`X-TM-Project-Id: <id>` header on every subsequent project-scoped request' 'skill requires the project header on every request, even with one project'
+assert_contains 'ask once which project before making any request that would mutate data' 'skill asks once and blocks mutations when ambiguous'
+assert_contains 'Send zero mutations until the project is resolved' 'skill blocks mutations until project selection resolves'
+assert_contains 'Never choose a project by list order' 'skill forbids inferring project from list order'
+assert_contains 'a repository/folder name match' 'skill forbids inferring project from name matching'
+assert_contains 'retry it against a different project, account, or the browser to force a' 'skill forbids retrying a blocked operation against another project/account/browser'
+assert_before '## Personal API keys and deliberate project selection' '## Before making any API call' 'project-selection guidance appears before operational instructions'
+assert_before '## Mandatory API-only guardrail' '## Personal API keys and deliberate project selection' 'core guardrail appears before project-selection guidance'
+
 printf '1..%d\n' "$pass_count"
