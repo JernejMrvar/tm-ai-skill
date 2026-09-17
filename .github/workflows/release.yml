@@ -1,0 +1,47 @@
+name: Release
+
+# Publishes a numbered, immutable GitHub Release for a pushed vX.Y.Z tag.
+# Never runs on pushes to main — a release is only ever cut from an explicit
+# tag, never a mutable branch head. See RELEASING.md for the full runbook,
+# including the separate, manual promotion step in TestManagementProject.
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  package-and-publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Verify the tag matches the VERSION file
+        run: |
+          tag_version="${GITHUB_REF_NAME#v}"
+          file_version="$(cat VERSION)"
+          if [ "$tag_version" != "$file_version" ]; then
+            echo "error: tag $GITHUB_REF_NAME does not match VERSION file ($file_version)" >&2
+            exit 1
+          fi
+
+      - name: Run packaging test suite
+        run: |
+          for test in tests/*_test.sh; do
+            bash "$test"
+          done
+
+      - name: Package release artifact
+        run: ./scripts/package-release.sh "$GITHUB_REF_NAME"
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/*.tar.gz
+            dist/*.manifest.json
+          generate_release_notes: true
