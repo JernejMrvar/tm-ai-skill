@@ -51,7 +51,7 @@ This will:
 3. Install the skill for **Cursor** → `~/.cursor/rules/tm-api.md`
 4. Store your API token in the OS credential store
 5. Write `~/.tm-config` with non-secret settings and credential lookup logic
-6. If the deployment has promoted a versioned release, install pinned/checksum-verified content and record its version; if a successfully validated manifest explicitly says no release is promoted, fall back to the current unpinned `SKILL.md` (today's production state — no release is promoted yet). Manifest failures leave existing files unchanged.
+6. If the deployment has promoted a versioned release, install pinned/checksum-verified content and record its version; if a successfully validated manifest explicitly says no release is promoted, fall back to the current unpinned `SKILL.md` (today's production state — no release is promoted yet). Manifest failures leave existing files unchanged. A Settings-generated bootstrap command carries the exact release snapshot selected when it was copied, so promotion changes during execution cannot switch the artifact or trigger this fallback.
 
 ### Modes
 
@@ -65,7 +65,7 @@ install.sh retry-report # resend a previously undelivered installation report
 
 `update`, `check`, and `retry-report` never create, rotate, revoke, or prompt for a credential — only `install`/`reconfigure` do. The token is never accepted as a `--token` argument (it would be visible in process listings); pipe it on stdin for non-interactive use (e.g. a generated install command) or run interactively for a secure `/dev/tty` prompt.
 
-Other options: `--base-url=URL`, `--display-name=NAME`, `--target=codex,claude,cursor` (default: all three), `--switch-account` (required to replace a stored credential for a different account on the same deployment), `--yes`.
+Other options: `--base-url=URL`, `--display-name=NAME`, `--target=codex,claude,cursor` (default: all three), `--switch-account` (required to replace a stored credential for a different account on the same deployment), `--yes`. The generated bootstrap handoff may additionally pass `--release-snapshot=JSON`; that exact validated envelope is used without refetching the current manifest and is not a general-purpose update/check option.
 
 Exit codes: `0` all requested local work succeeded (a report may still be pending — the summary says so explicitly), `1` a local/validation failure or partial local failure, `2` a usage/dependency/platform error. `retry-report` exits nonzero whenever delivery is still pending after the attempt.
 
@@ -134,9 +134,11 @@ installer now consumes when a compatible release is promoted:
 - `GET /api/v1/skill-release` — a public, credential-free endpoint serving
   the deployment's promoted release manifest (version, per-target payload
   versions, and immutable artifact URLs/checksums), or an explicit "no
-  release promoted" state. `install`/`reconfigure` fall back to the
+  release promoted" state. Direct `install`/`reconfigure` fall back to the
   existing unpinned `SKILL.md` download only when no compatible release is
-  promoted yet (today's actual production state); `update`/`check` never
+  promoted yet (today's actual production state); a Settings-generated
+  bootstrap command instead supplies its exact release snapshot and never
+  refetches or enters that fallback. `update`/`check` never
   fall back to an unpinned download — no release simply means nothing to
   update.
 - `POST /api/v1/skill-installations/report` — a personal-API-key-only

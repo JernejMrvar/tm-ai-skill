@@ -17,7 +17,10 @@
 #   __ARTIFACT_URL__     immutable https release asset URL for the installer bundle
 #   __ARTIFACT_SHA256__  expected lowercase 64-hex sha256 of that exact artifact
 #   __ARTIFACT_SIZE__    expected exact byte size of that artifact
+#   __INSTALLER_VERSION__ stable SemVer version embedded in the bundle
 #   __INSTALL_MODE__     "install" or "reconfigure" — never update/check/retry-report
+#   __TARGET__           selected target: codex, claude or cursor
+#   __RELEASE_SNAPSHOT__ exact `{schemaVersion, release}` envelope selected by Settings
 #
 # The one-time personal key itself is never interpolated into this
 # template; it is piped to the extracted install.sh over stdin by whatever
@@ -35,7 +38,10 @@ TM_BOOTSTRAP_BASE_URL="__TM_BASE_URL__"
 TM_BOOTSTRAP_ARTIFACT_URL="__ARTIFACT_URL__"
 TM_BOOTSTRAP_ARTIFACT_SHA256="__ARTIFACT_SHA256__"
 TM_BOOTSTRAP_ARTIFACT_SIZE="__ARTIFACT_SIZE__"
+TM_BOOTSTRAP_INSTALLER_VERSION="__INSTALLER_VERSION__"
 TM_BOOTSTRAP_MODE="__INSTALL_MODE__"
+TM_BOOTSTRAP_TARGET="__TARGET__"
+TM_BOOTSTRAP_RELEASE_SNAPSHOT="__RELEASE_SNAPSHOT__"
 
 for cmd in curl tar; do
   if ! command -v "$cmd" >/dev/null 2>&1; then
@@ -76,6 +82,10 @@ if ! [[ "$TM_BOOTSTRAP_ARTIFACT_SIZE" =~ ^[0-9]+$ ]] || [ "$TM_BOOTSTRAP_ARTIFAC
   echo "Error: pinned artifact size is not a positive integer." >&2
   exit 2
 fi
+if ! [[ "$TM_BOOTSTRAP_INSTALLER_VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(\+[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$ ]]; then
+  echo "Error: pinned installer version is not a stable SemVer value." >&2
+  exit 2
+fi
 case "$TM_BOOTSTRAP_MODE" in
   install|reconfigure) : ;;
   *)
@@ -83,6 +93,17 @@ case "$TM_BOOTSTRAP_MODE" in
     exit 2
     ;;
 esac
+case "$TM_BOOTSTRAP_TARGET" in
+  codex|claude|cursor) : ;;
+  *)
+    echo "Error: bootstrap target is not supported." >&2
+    exit 2
+    ;;
+esac
+if [ -z "$TM_BOOTSTRAP_RELEASE_SNAPSHOT" ]; then
+  echo "Error: the selected release snapshot is missing." >&2
+  exit 2
+fi
 
 TM_BOOTSTRAP_TMPDIR="$(mktemp -d)"
 chmod 700 "$TM_BOOTSTRAP_TMPDIR" 2>/dev/null || true
@@ -110,30 +131,71 @@ if [ "$ACTUAL_SHA256" != "$TM_BOOTSTRAP_ARTIFACT_SHA256" ]; then
   exit 1
 fi
 
-# Reject anything but plain files/dirs, or an absolute/traversal path,
-# before tar ever extracts a byte — mirrors install.sh's own
-# validate_archive_entries so the bootstrap stage has the same guarantee
-# even before install.sh itself is available to run it.
-UNSAFE=0
-while IFS= read -r line; do
-  [ -z "$line" ] && continue
-  type_char="${line:0:1}"
-  entry_path="${line##* }"
-  case "$type_char" in
-    d|-) : ;;
-    *) UNSAFE=1 ;;
-  esac
-  case "$entry_path" in
-    /*) UNSAFE=1 ;;
-  esac
-  case "$entry_path" in
-    *..*) UNSAFE=1 ;;
-  esac
-done <<EOF_LISTING
-$(tar -tvzf "$ARCHIVE_PATH" 2>/dev/null)
-EOF_LISTING
-if [ "$UNSAFE" != "0" ]; then
-  echo "Error: release artifact contains an unsafe archive entry; refusing to extract." >&2
+# The publisher creates exactly this directory and these four files. Comparing
+# the complete name listing catches absolute/traversal paths, duplicates and
+# unexpected entries before tar extracts anything, and binds the archive
+# directory to the installer version in the selected release snapshot.
+EXPECTED_ROOT="tm-ai-skill-${TM_BOOTSTRAP_INSTALLER_VERSION}"
+EXPECTED_ENTRIES="$(printf '%s\n' \
+  "${EXPECTED_ROOT}/" \
+  "${EXPECTED_ROOT}/install.sh" \
+  "${EXPECTED_ROOT}/SKILL.md" \
+  "${EXPECTED_ROOT}/README.md" \
+  "${EXPECTED_ROOT}/VERSION" | LC_ALL=C sort)"
+if ! ACTUAL_ENTRIES="$(tar -tzf "$ARCHIVE_PATH" 2>/dev/null | LC_ALL=C sort)"; then
+  echo "Error: release artifact could not be listed safely; refusing to extract." >&2
+  exit 1
+fi
+if [ "$ACTUAL_ENTRIES" != "$EXPECTED_ENTRIES" ]; then
+  echo "Error: release artifact has an unexpected layout or file set; refusing to extract." >&2
+  exit 1
+fi
+
+# Tar name listings alone cannot distinguish regular files from links/specials.
+# Inspect the verbose type and size fields as well, and cap the total declared
+# uncompressed payload to prevent a small compressed archive from expanding
+# without bound. The two size layouts below cover BSD tar (macOS) and GNU tar
+# (Git Bash/Linux); an unknown listing format fails closed.
+if ! ARCHIVE_LISTING="$(tar -tvzf "$ARCHIVE_PATH" 2>/dev/null)" || [ -z "$ARCHIVE_LISTING" ]; then
+  echo "Error: release artifact could not be inspected safely; refusing to extract." >&2
+  exit 1
+fi
+if ! printf '%s\n' "$ARCHIVE_LISTING" | awk -v max_bytes=$((16 * 1024 * 1024)) '
+  {
+    type_char = substr($1, 1, 1)
+    if (type_char != "d" && type_char != "-") invalid = 1
+
+    size = ""
+    if ($2 ~ /^[0-9]+$/ && $5 ~ /^[0-9]+$/) {
+      size = $5
+    } else if ($3 ~ /^[0-9]+$/) {
+      size = $3
+    } else {
+      invalid = 1
+    }
+
+    if (size != "") {
+      if (size > max_bytes || total > max_bytes - size) {
+        invalid = 1
+      } else {
+        total += size
+      }
+    }
+  }
+  END { exit invalid ? 1 : 0 }
+'; then
+  echo "Error: release artifact contains links, special files, or an oversized payload; refusing to extract." >&2
+  exit 1
+fi
+
+# The package VERSION file is part of the digest-protected payload. Check it
+# before extraction so a mismatched runtime version cannot be launched.
+if ! ARCHIVE_VERSION="$(tar -xOzf "$ARCHIVE_PATH" "${EXPECTED_ROOT}/VERSION" 2>/dev/null)"; then
+  echo "Error: release artifact VERSION metadata could not be read; refusing to extract." >&2
+  exit 1
+fi
+if [ "$ARCHIVE_VERSION" != "$TM_BOOTSTRAP_INSTALLER_VERSION" ]; then
+  echo "Error: release artifact VERSION does not match the pinned installer version; refusing to extract." >&2
   exit 1
 fi
 
@@ -141,14 +203,22 @@ EXTRACT_DIR="$TM_BOOTSTRAP_TMPDIR/extracted"
 mkdir -p "$EXTRACT_DIR"
 tar -xzf "$ARCHIVE_PATH" -C "$EXTRACT_DIR"
 
-INSTALL_SH="$(find "$EXTRACT_DIR" -mindepth 1 -maxdepth 2 -name 'install.sh' 2>/dev/null | head -n1)"
-if [ -z "$INSTALL_SH" ]; then
-  echo "Error: extracted artifact did not contain install.sh." >&2
+INSTALLER_DIR="$EXTRACT_DIR/$EXPECTED_ROOT"
+INSTALL_SH="$INSTALLER_DIR/install.sh"
+if [ ! -d "$INSTALLER_DIR" ] || [ ! -f "$INSTALL_SH" ] || [ -L "$INSTALL_SH" ]; then
+  echo "Error: extracted release artifact did not contain its validated installer path." >&2
   exit 1
 fi
 chmod +x "$INSTALL_SH"
 
 # The one-time key arrives on this process's stdin (never as an argument,
 # never interpolated into this script's own text) and is forwarded
-# unchanged to the verified, pinned installer.
-exec "$INSTALL_SH" "$TM_BOOTSTRAP_MODE" "--base-url=$TM_BOOTSTRAP_BASE_URL"
+# unchanged to the verified, pinned installer. Keep this process alive so
+# the EXIT trap removes the staging directory, while preserving the child's
+# exact exit status for the caller.
+if "$INSTALL_SH" "$TM_BOOTSTRAP_MODE" "--base-url=$TM_BOOTSTRAP_BASE_URL" "--target=$TM_BOOTSTRAP_TARGET" "--release-snapshot=$TM_BOOTSTRAP_RELEASE_SNAPSHOT"; then
+  INSTALLER_STATUS=0
+else
+  INSTALLER_STATUS=$?
+fi
+exit "$INSTALLER_STATUS"

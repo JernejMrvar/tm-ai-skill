@@ -74,6 +74,14 @@ successfully fetched and validated manifest explicitly reports
 `release: null`. A network failure, malformed manifest, or incompatible
 promoted release fails closed and leaves existing target files unchanged.
 
+A Settings-generated bootstrap command supplies the exact
+`{schemaVersion: 1, release: ...}` envelope selected when the command was
+copied through `--release-snapshot=...`. The installer validates that
+snapshot before writing credentials, then uses its pinned artifact metadata
+directly; it does not fetch `/api/v1/skill-release` again and cannot enter
+the unpinned legacy fallback, even if promotion changes or the current
+manifest becomes `release: null` before execution.
+
 A SemVer comparison helper (`semver_compare`) implements semver.org
 precedence including prerelease-identifier comparison (numeric vs.
 alphanumeric, per-dot-segment) and ignores build metadata, matching the
@@ -148,12 +156,15 @@ failure to the behavior described in the POV-30 doc's idempotency section.
 
 `bootstrap.sh` is the fixed, placeholder-based template a future Settings
 command builder renders (substituting the deployment URL, artifact URL/
-sha256/size, and mode) into the copyable install command. It performs its
-own https-only/immutable-URL/sha256-format/size/mode validation before any
-network call, downloads to a private temp directory, verifies digest and
-size, runs the same archive-safety check as `install.sh`, and `exec`s the
-extracted `install.sh` — the one-time key is never interpolated into it,
-only piped to stdin by whatever invokes the rendered script. It is
+sha256/size, installer version, target, release snapshot and mode) into the
+copyable install command. It performs its own https-only/immutable-URL/
+sha256-format/size/version/mode/target validation before any network call,
+downloads to a private temp directory, verifies digest and size, runs the
+same exact-layout/archive-safety check as `install.sh`, and invokes the
+extracted `install.sh` as a child with the selected target and snapshot. The
+child status is preserved so the bootstrap EXIT trap cleans staging. The
+one-time key is never interpolated into it, only inherited on stdin by the
+installer. It is
 deliberately not part of the packaged release bundle (`ALLOWED_FILES` in
 `scripts/package-release.sh`), since it has to run *before* `install.sh`
 exists on disk.

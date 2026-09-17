@@ -6,7 +6,7 @@ set -euo pipefail
 # install.sh itself is available on disk. Exercises both the fail-fast
 # validation gates (no network involved) and, via a deterministic local
 # `curl` stand-in, the full download -> digest/size check -> archive-safety
-# check -> extract -> exec(install.sh) pipeline — without any real network
+# check -> extract -> invoke(install.sh) pipeline — without any real network
 # access or TLS (see the `curl` shim below for why real https: URL text is
 # still required and asserted).
 
@@ -54,12 +54,16 @@ assert_contains_file() {
 # Renders bootstrap.sh with the given placeholder values into $1.
 render_bootstrap() {
   local out="$1" base_url="$2" artifact_url="$3" sha="$4" size="$5" mode="$6"
+  local installer_version="${7:-9.9.9}" target="${8:-codex}" snapshot="${9:-snapshot}"
   sed \
     -e "s#__TM_BASE_URL__#${base_url}#g" \
     -e "s#__ARTIFACT_URL__#${artifact_url}#g" \
     -e "s#__ARTIFACT_SHA256__#${sha}#g" \
     -e "s#__ARTIFACT_SIZE__#${size}#g" \
+    -e "s#__INSTALLER_VERSION__#${installer_version}#g" \
     -e "s#__INSTALL_MODE__#${mode}#g" \
+    -e "s#__TARGET__#${target}#g" \
+    -e "s#__RELEASE_SNAPSHOT__#${snapshot}#g" \
     "$ROOT_DIR/bootstrap.sh" > "$out"
   chmod +x "$out"
 }
@@ -93,7 +97,7 @@ assert_fails "rejects a mode other than install/reconfigure" bash "$TMP_ROOT/b5.
 # fixed local fixture file by the URL's basename, so bootstrap.sh's own
 # https-only string check (asserted above) is what actually proves the
 # scheme requirement — this shim only lets us exercise everything *after*
-# that check (download/digest/size/archive-safety/extract/exec) with a
+# that check (download/digest/size/archive-safety/extract/invoke) with a
 # controlled artifact instead of a live server.
 
 FIXTURE_DIR="$TMP_ROOT/fixtures"
@@ -103,10 +107,12 @@ BUILD_DIR="$TMP_ROOT/build/tm-ai-skill-9.9.9"
 mkdir -p "$BUILD_DIR"
 cat > "$BUILD_DIR/install.sh" <<'EOF'
 #!/usr/bin/env bash
-echo "FAKE_INSTALL_SH_INVOKED mode=$1 $2"
+echo "FAKE_INSTALL_SH_INVOKED mode=$1 $2 $3 $4"
 EOF
 chmod +x "$BUILD_DIR/install.sh"
 echo "fixture skill" > "$BUILD_DIR/SKILL.md"
+echo "fixture readme" > "$BUILD_DIR/README.md"
+echo "9.9.9" > "$BUILD_DIR/VERSION"
 (cd "$TMP_ROOT/build" && tar czf "$FIXTURE_DIR/good.tar.gz" tm-ai-skill-9.9.9)
 
 python3 "$ROOT_DIR/tests/fixtures/make_archive.py" "$FIXTURE_DIR/traversal.tar.gz" \
@@ -151,7 +157,9 @@ render_bootstrap "$TMP_ROOT/good.sh" "https://example.test" "https://example.tes
 
 PATH="$FAKE_BIN:$PATH" bash "$TMP_ROOT/good.sh" > "$TMP_ROOT/good.out" 2>&1
 assert_contains_file "FAKE_INSTALL_SH_INVOKED mode=install --base-url=https://example.test" "$TMP_ROOT/good.out" \
-  "a verified good artifact is extracted and install.sh is invoked with the right mode/base-url"
+  "a verified good artifact is extracted and install.sh is invoked with the handoff arguments"
+assert_contains_file "mode=install --base-url=https://example.test --target=codex --release-snapshot=snapshot" "$TMP_ROOT/good.out" \
+  "bootstrap forwards the selected target and release snapshot"
 
 wrong_sha="${good_sha%?}0"
 [ "$wrong_sha" = "$good_sha" ] && wrong_sha="${good_sha%?}1"
@@ -167,7 +175,7 @@ if [ ! -f "$FIXTURE_DIR/traversal.tar.gz.skip" ]; then
     "$traversal_sha" "$traversal_size" install
   assert_fails "an archive with a path-traversal entry is rejected before extraction" \
     env PATH="$FAKE_BIN:$PATH" bash "$TMP_ROOT/traversal.sh"
-  assert_contains_file "unsafe archive entry" "$TMP_ROOT/out" "traversal rejection message is explicit"
+  assert_contains_file "unexpected layout" "$TMP_ROOT/out" "traversal rejection message is explicit"
 fi
 
 printf '1..%d\n' "$pass_count"
