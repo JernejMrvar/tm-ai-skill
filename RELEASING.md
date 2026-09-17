@@ -11,9 +11,11 @@ staged download/digest/archive-safety verification, atomic per-target file
 replacement with local version tracking, and self-reported installation
 observations to `POST /api/v1/skill-installations/report` for personal
 (`tmp_`) keys. `install`/`reconfigure` fall back to the previous unpinned
-`SKILL.md` download from `main` only when no compatible release is
-promoted yet — which is still true for every current production deployment
-(`config/ai-skill-release.json` ships `"release": null`). See
+`SKILL.md` download from `main` only when a successfully validated manifest
+explicitly reports that no release is promoted — which is still true for
+every current production deployment (`config/ai-skill-release.json` ships
+`"release": null`). Network, malformed, and incompatible manifests fail
+closed without replacing installed files. See
 [`docs/POV-31-install-update-reporting.md`](docs/POV-31-install-update-reporting.md)
 for what was implemented and tested versus what remains open.
 

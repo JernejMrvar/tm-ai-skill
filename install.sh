@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Legacy fallback source, used only when a deployment has no promoted,
-# compatible release yet (see sync_targets_legacy). The versioned flow
-# (sync_targets_release) never uses this — it only ever installs pinned,
-# checksum-verified release artifacts.
+# Legacy fallback source, used only when a deployment's successfully
+# validated manifest explicitly reports no promoted release (see
+# sync_targets_legacy). The versioned flow (sync_targets_release) never uses
+# this — it only ever installs pinned, checksum-verified release artifacts.
 SKILL_URL="https://raw.githubusercontent.com/JernejMrvar/tm-ai-skill/main/SKILL.md"
 DEFAULT_TM_BASE_URL="https://test-management-project.vercel.app"
 CONFIG_FILE="${TM_CONFIG_FILE:-$HOME/.tm-config}"
@@ -13,9 +13,15 @@ TM_INSTALL_TEST_MODE="${TM_INSTALL_TEST_MODE:-0}"
 TM_INSTALL_TTY_PATH="${TM_INSTALL_TTY_PATH:-/dev/tty}"
 TM_STATE_DIR="${TM_STATE_DIR:-$HOME/.tm}"
 
-TM_INSTALLER_SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd || true)"
+TM_INSTALLER_SOURCE="${BASH_SOURCE[0]-}"
+if [ -n "${BASH_EXECUTION_STRING-}" ]; then
+  TM_INSTALLER_EXECUTION_MODE=1
+else
+TM_INSTALLER_EXECUTION_MODE=0
+fi
+TM_INSTALLER_SELF_DIR="$(cd "$(dirname "$TM_INSTALLER_SOURCE")" 2>/dev/null && pwd || true)"
 TM_INSTALLER_VERSION="0.0.0-dev"
-if [ -n "$TM_INSTALLER_SELF_DIR" ] && [ -f "$TM_INSTALLER_SELF_DIR/VERSION" ]; then
+if [ -n "$TM_INSTALLER_SOURCE" ] && [ -n "$TM_INSTALLER_SELF_DIR" ] && [ -f "$TM_INSTALLER_SELF_DIR/VERSION" ]; then
   TM_INSTALLER_VERSION="$(cat "$TM_INSTALLER_SELF_DIR/VERSION" 2>/dev/null || echo "0.0.0-dev")"
 fi
 
@@ -444,6 +450,23 @@ read_existing_config_value() {
   return 1
 }
 
+# A token in ~/.tm-config is only safe to use for the deployment that the
+# config itself declares. In particular, do not let --base-url redirect a
+# credential read from one deployment to another.
+configured_deployment_matches() {
+  local requested_base_url="$1"
+  local configured_base_url
+
+  configured_base_url="$(read_existing_config_value TM_BASE_URL "$CONFIG_FILE" 2>/dev/null || true)"
+  [ -n "$configured_base_url" ] || return 1
+  validate_deployment_url "$configured_base_url" || return 1
+  validate_deployment_url "$requested_base_url" || return 1
+
+  configured_base_url="$(canonicalize_deployment_url "$configured_base_url")"
+  requested_base_url="$(canonicalize_deployment_url "$requested_base_url")"
+  [ "$configured_base_url" = "$requested_base_url" ]
+}
+
 credential_target() {
   local base_url="$1"
 
@@ -715,12 +738,14 @@ resolve_base_url_opt() {
 
 resolve_token() {
   local base_url="$1"
-  local existing_token stored_token target
+  local existing_token="" stored_token target
 
-  existing_token="$(read_existing_config_value TM_TOKEN "$CONFIG_FILE" 2>/dev/null || true)"
-  if [[ "$existing_token" == tm_* ]] || [[ "$existing_token" == tmp_* ]]; then
-    printf '%s\n' "$existing_token"
-    return 0
+  if configured_deployment_matches "$base_url"; then
+    existing_token="$(read_existing_config_value TM_TOKEN "$CONFIG_FILE" 2>/dev/null || true)"
+    if [[ "$existing_token" == tm_* ]] || [[ "$existing_token" == tmp_* ]]; then
+      printf '%s\n' "$existing_token"
+      return 0
+    fi
   fi
 
   if credential_exists "$base_url"; then
@@ -747,6 +772,14 @@ resolve_token() {
 read_config_token_no_prompt() {
   local base_url="$1"
   local existing_token
+
+  # A --base-url override must not reuse a token declared for another
+  # deployment. Return an empty result, rather than failing, so callers can
+  # continue their local-only operation without sending that credential.
+  if ! configured_deployment_matches "$base_url"; then
+    return 0
+  fi
+
   existing_token="$(read_existing_config_value TM_TOKEN "$CONFIG_FILE" 2>/dev/null || true)"
   if [[ "$existing_token" == tm_* ]] || [[ "$existing_token" == tmp_* ]]; then
     printf '%s\n' "$existing_token"
@@ -762,9 +795,24 @@ read_config_token_no_prompt() {
 
 acquire_candidate_token() {
   local base_url="$1"
+  # When bash is consuming install.sh itself from stdin (for example
+  # `curl ... | bash`), stdin is the script, not a token. There is no source
+  # identifier in that invocation, so leave stdin alone and prompt via
+  # /dev/tty instead of treating the script/EOF as token input.
+  if [ "${TM_INSTALL_PROMPT_TOKEN+x}" != "x" ] && [ ! -t 0 ] && \
+     [ -z "$TM_INSTALLER_SOURCE" ] && [ "$TM_INSTALLER_EXECUTION_MODE" = "0" ]; then
+    resolve_token "$base_url"
+    return $?
+  fi
+
   if [ "${TM_INSTALL_PROMPT_TOKEN+x}" != "x" ] && [ ! -t 0 ]; then
-    local token
-    IFS= read -r token || true
+    local token=""
+    if ! IFS= read -r token; then
+      if [ -z "$token" ]; then
+        resolve_token "$base_url"
+        return $?
+      fi
+    fi
     if [[ "$token" != tm_* ]] && [[ "$token" != tmp_* ]]; then
       echo "Error: token read from stdin must start with tm_ or tmp_." >&2
       return 1
@@ -1230,7 +1278,7 @@ validate_release() {
   RELEASE_COMPATIBLE=0
   RELEASE_JSON=""
 
-  printf '%s' "$json" | jq -e '.schemaVersion == 1' >/dev/null 2>&1 || return 1
+  printf '%s' "$json" | jq -e 'type == "object" and .schemaVersion == 1 and has("release")' >/dev/null 2>&1 || return 1
 
   release="$(printf '%s' "$json" | jq -c '.release' 2>/dev/null)"
   if [ "$release" = "null" ] || [ -z "$release" ]; then
@@ -1354,8 +1402,8 @@ extract_archive() {
 }
 
 # ---------------------------------------------------------------------------
-# Per-target sync: legacy (unpinned `main`, first-install fallback only) and
-# release-based (pinned, checksum-verified, version-tracked).
+# Per-target sync: legacy (unpinned `main`, explicit no-release fallback only)
+# and release-based (pinned, checksum-verified, version-tracked).
 # ---------------------------------------------------------------------------
 
 sync_targets_legacy() {
@@ -1468,6 +1516,54 @@ sync_targets_release() {
   done
 
   rm -rf "$stage_root" 2>/dev/null
+}
+
+# A development fallback is safe only after the deployment has successfully
+# returned and validated an explicit no-release manifest. Network failures,
+# malformed responses, and incompatible releases must leave existing target
+# files untouched and surface as failed installation observations.
+sync_targets_from_manifest() {
+  local mode="$1" targets="$2" local_state_dir="$3" base_url="$4"
+  local release_json="" manifest_state="unavailable" t
+
+  RELEASE_PRESENT=0
+  RELEASE_COMPATIBLE=0
+  RELEASE_JSON=""
+  if release_json="$(fetch_release_manifest "$base_url" 2>/dev/null)"; then
+    if validate_release "$release_json"; then
+      manifest_state="valid"
+    else
+      manifest_state="invalid"
+    fi
+  fi
+
+  case "$manifest_state" in
+    valid)
+      if [ "$RELEASE_PRESENT" = "1" ] && [ "$RELEASE_COMPATIBLE" = "1" ]; then
+        sync_targets_release "$mode" "$targets" "$local_state_dir"
+      elif [ "$RELEASE_PRESENT" = "0" ]; then
+        echo "Note: no promoted release is currently available from $base_url; installing the latest development skill docs (version tracking is unavailable until a release is promoted)."
+        sync_targets_legacy "$targets"
+      else
+        echo "Error: the promoted release from $base_url is incompatible with this installer's supported API surface; existing installed files were left unchanged." >&2
+        for t in $targets; do
+          append_target_result "$t" "failed" "" "" "INCOMPATIBLE_RELEASE"
+        done
+      fi
+      ;;
+    invalid)
+      echo "Error: the release manifest from $base_url was invalid; existing installed files were left unchanged." >&2
+      for t in $targets; do
+        append_target_result "$t" "failed" "" "" "INVALID_RELEASE_MANIFEST"
+      done
+      ;;
+    unavailable)
+      echo "Error: could not retrieve the release manifest from $base_url; existing installed files were left unchanged." >&2
+      for t in $targets; do
+        append_target_result "$t" "failed" "" "" "RELEASE_MANIFEST_UNAVAILABLE"
+      done
+      ;;
+  esac
 }
 
 # ---------------------------------------------------------------------------
@@ -1606,7 +1702,7 @@ print_summary_generic() {
 
 compute_exit_code() {
   if [ -n "$TARGET_RESULTS_FILE" ] && [ -s "$TARGET_RESULTS_FILE" ] && \
-     jq -e 'map(select(.result=="failed")) | length > 0' "$TARGET_RESULTS_FILE" >/dev/null 2>&1; then
+     jq -s -e 'map(select(.result=="failed")) | length > 0' "$TARGET_RESULTS_FILE" >/dev/null 2>&1; then
     echo 1
     return
   fi
@@ -1666,17 +1762,10 @@ run_configure_and_install() {
   write_config "$CONFIG_FILE" "$base_url"
 
   TARGET_RESULTS_FILE="$(mktemp)"
-  local targets local_state_dir release_json
+  local targets local_state_dir
   targets="$(resolve_target_list)"
   local_state_dir="$(local_version_state_dir "$base_url")"
-  release_json="$(fetch_release_manifest "$base_url" 2>/dev/null || true)"
-
-  if [ -n "$release_json" ] && validate_release "$release_json" && [ "$RELEASE_PRESENT" = "1" ] && [ "$RELEASE_COMPATIBLE" = "1" ]; then
-    sync_targets_release "$mode" "$targets" "$local_state_dir"
-  else
-    echo "Note: no promoted, compatible release is currently available from $base_url; installing the latest development skill docs (version tracking is unavailable until a release is promoted)."
-    sync_targets_legacy "$targets"
-  fi
+  sync_targets_from_manifest "$mode" "$targets" "$local_state_dir" "$base_url"
 
   local cred_verification_result="not_checked" cred_verification_failure=""
   if [ "$CRED_KIND" = "personal" ]; then

@@ -69,6 +69,11 @@ a positive `sizeBytes`, and an immutable `https://` URL (rejecting
 `main`/`latest`/`master`/`head`/`trunk` path segments, case-insensitively).
 One bad/ambiguous target's artifact never invalidates the other targets.
 
+`install`/`reconfigure` use the unpinned legacy download only after a
+successfully fetched and validated manifest explicitly reports
+`release: null`. A network failure, malformed manifest, or incompatible
+promoted release fails closed and leaves existing target files unchanged.
+
 A SemVer comparison helper (`semver_compare`) implements semver.org
 precedence including prerelease-identifier comparison (numeric vs.
 alphanumeric, per-dot-segment) and ignores build metadata, matching the
@@ -175,20 +180,22 @@ modes, the `jq` dependency, and what the installer now actually consumes.
   running it).
 - Full test suite, run both individually and via the same `for test in
   tests/*_test.sh; do bash "$test"; done` loop CI uses:
-  - `tests/install_helpers_test.sh` — 49/49 (the original 25 assertions,
-    unmodified, still pass against the extended script; 24 new ones cover
+  - `tests/install_helpers_test.sh` — 57/57 (the original 25 assertions,
+    unmodified, still pass against the extended script; 32 new ones cover
     `semver_compare` against the SemVer spec's canonical prerelease-
     precedence chain, `is_stable_semver`, `validate_deployment_url`/
-    `canonicalize_deployment_url`, `is_immutable_https_url`, and
-    `generate_uuid`'s format).
+    `canonicalize_deployment_url`, deployment-scoped credential lookup,
+    stdin prompt fallback, `is_immutable_https_url`,
+    `generate_uuid`'s format, and newline-delimited exit-code aggregation).
   - `tests/skill_guardrails_test.sh` — 21/21 (11 pre-existing + 10 new,
     covering the new SKILL.md section's content and ordering).
   - `tests/package_release_test.sh` — 12/12 (unmodified; this PR didn't
     touch packaging, since no new files needed to enter the distributed
     bundle — `bootstrap.sh` deliberately isn't part of it).
-  - `tests/release_and_report_test.sh` (new) — 35/35: release-manifest
+  - `tests/release_and_report_test.sh` (new) — 44/44: release-manifest
     validation against realistic POV-30 fixtures (`release: null`, a valid
-    envelope, an incompatible `tmApiContractVersion`); a full install →
+    envelope, an incompatible `tmApiContractVersion`); fail-closed handling
+    for unavailable, malformed, and incomplete manifests; a full install →
     update (no-op) → locally-edited-skip → reconfigure-overwrite cycle
     against a *real* HTTP download/digest/extract/stage/commit round trip
     via a local fixture server (`tests/fixtures/fake_tm_server.py`); digest-

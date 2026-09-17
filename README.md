@@ -51,7 +51,7 @@ This will:
 3. Install the skill for **Cursor** → `~/.cursor/rules/tm-api.md`
 4. Store your API token in the OS credential store
 5. Write `~/.tm-config` with non-secret settings and credential lookup logic
-6. If the deployment has promoted a versioned release, install pinned/checksum-verified content and record its version; otherwise fall back to the current unpinned `SKILL.md` (today's production state — no release is promoted yet)
+6. If the deployment has promoted a versioned release, install pinned/checksum-verified content and record its version; if a successfully validated manifest explicitly says no release is promoted, fall back to the current unpinned `SKILL.md` (today's production state — no release is promoted yet). Manifest failures leave existing files unchanged.
 
 ### Modes
 

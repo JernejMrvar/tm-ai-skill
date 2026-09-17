@@ -208,6 +208,80 @@ validate_release "$incompatible_envelope"
 assert_eq "1" "$RELEASE_PRESENT" "an incompatible release is still present"
 assert_eq "0" "$RELEASE_COMPATIBLE" "a higher tmApiContractVersion than supported is incompatible"
 
+# A failed or malformed manifest must never enter the unpinned legacy path.
+# It is recorded as a target failure so the installer exits nonzero and leaves
+# existing target files untouched.
+manifest_unavailable_output="$TMP_ROOT/manifest-unavailable.results"
+manifest_unavailable_legacy="$TMP_ROOT/manifest-unavailable.legacy"
+manifest_unavailable_release="$TMP_ROOT/manifest-unavailable.release"
+manifest_unavailable_observation="$(
+  (
+    TARGET_RESULTS_FILE="$manifest_unavailable_output"
+    fetch_release_manifest() { return 1; }
+    sync_targets_legacy() { : > "$manifest_unavailable_legacy"; }
+    sync_targets_release() { : > "$manifest_unavailable_release"; }
+    sync_targets_from_manifest "install" "codex" "$TMP_ROOT/state" "$BASE_URL" >/dev/null 2>&1
+    printf '%s|%s' "$(compute_exit_code)" "$(jq -r '.failureCode' "$manifest_unavailable_output")"
+  )
+)"
+assert_eq "1|RELEASE_MANIFEST_UNAVAILABLE" "$manifest_unavailable_observation" \
+  "an unavailable manifest fails the installation"
+assert_file_missing "$manifest_unavailable_legacy" \
+  "an unavailable manifest never triggers the legacy fallback"
+assert_file_missing "$manifest_unavailable_release" \
+  "an unavailable manifest never triggers a release sync"
+
+manifest_invalid_output="$TMP_ROOT/manifest-invalid.results"
+manifest_invalid_legacy="$TMP_ROOT/manifest-invalid.legacy"
+manifest_invalid_observation="$(
+  (
+    TARGET_RESULTS_FILE="$manifest_invalid_output"
+    fetch_release_manifest() { printf '%s' '{"schemaVersion":'; }
+    sync_targets_legacy() { : > "$manifest_invalid_legacy"; }
+    sync_targets_from_manifest "install" "codex" "$TMP_ROOT/state" "$BASE_URL" >/dev/null 2>&1
+    printf '%s|%s' "$(compute_exit_code)" "$(jq -r '.failureCode' "$manifest_invalid_output")"
+  )
+)"
+assert_eq "1|INVALID_RELEASE_MANIFEST" "$manifest_invalid_observation" \
+  "a malformed manifest fails the installation"
+assert_file_missing "$manifest_invalid_legacy" \
+  "a malformed manifest never triggers the legacy fallback"
+
+manifest_incomplete_output="$TMP_ROOT/manifest-incomplete.results"
+manifest_incomplete_legacy="$TMP_ROOT/manifest-incomplete.legacy"
+manifest_incomplete_observation="$(
+  (
+    TARGET_RESULTS_FILE="$manifest_incomplete_output"
+    fetch_release_manifest() { printf '%s' '{"schemaVersion":1}'; }
+    sync_targets_legacy() { : > "$manifest_incomplete_legacy"; }
+    sync_targets_from_manifest "install" "codex" "$TMP_ROOT/state" "$BASE_URL" >/dev/null 2>&1
+    printf '%s|%s' "$(compute_exit_code)" "$(jq -r '.failureCode' "$manifest_incomplete_output")"
+  )
+)"
+assert_eq "1|INVALID_RELEASE_MANIFEST" "$manifest_incomplete_observation" \
+  "an incomplete manifest fails the installation"
+assert_file_missing "$manifest_incomplete_legacy" \
+  "an incomplete manifest never triggers the legacy fallback"
+
+manifest_null_output="$TMP_ROOT/manifest-null.results"
+manifest_null_legacy="$TMP_ROOT/manifest-null.legacy"
+manifest_null_observation="$(
+  (
+    TARGET_RESULTS_FILE="$manifest_null_output"
+    fetch_release_manifest() { printf '%s' '{"schemaVersion":1,"release":null}'; }
+    sync_targets_legacy() {
+      : > "$manifest_null_legacy"
+      append_target_result codex success "" "" ""
+    }
+    sync_targets_from_manifest "install" "codex" "$TMP_ROOT/state" "$BASE_URL" >/dev/null 2>&1
+    printf '%s|%s' "$(compute_exit_code)" "$(jq -r '.result' "$manifest_null_output")"
+  )
+)"
+assert_eq "0|success" "$manifest_null_observation" \
+  "only a successfully validated no-release manifest triggers the legacy fallback"
+assert_file_exists "$manifest_null_legacy" \
+  "a validated no-release manifest invokes the legacy fallback"
+
 # =============================================================================
 # Fresh install of a single target from a verified release
 # =============================================================================
