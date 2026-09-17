@@ -1522,6 +1522,9 @@ sync_targets_release() {
 # returned and validated an explicit no-release manifest. Network failures,
 # malformed responses, and incompatible releases must leave existing target
 # files untouched and surface as failed installation observations.
+# The target-observation API accepts a fixed failure vocabulary: network
+# retrieval failures map to NETWORK_ERROR, while invalid/incompatible release
+# state maps to UNKNOWN_ERROR.
 sync_targets_from_manifest() {
   local mode="$1" targets="$2" local_state_dir="$3" base_url="$4"
   local release_json="" manifest_state="unavailable" t
@@ -1547,20 +1550,20 @@ sync_targets_from_manifest() {
       else
         echo "Error: the promoted release from $base_url is incompatible with this installer's supported API surface; existing installed files were left unchanged." >&2
         for t in $targets; do
-          append_target_result "$t" "failed" "" "" "INCOMPATIBLE_RELEASE"
+          append_target_result "$t" "failed" "" "" "UNKNOWN_ERROR"
         done
       fi
       ;;
     invalid)
       echo "Error: the release manifest from $base_url was invalid; existing installed files were left unchanged." >&2
       for t in $targets; do
-        append_target_result "$t" "failed" "" "" "INVALID_RELEASE_MANIFEST"
+        append_target_result "$t" "failed" "" "" "UNKNOWN_ERROR"
       done
       ;;
     unavailable)
       echo "Error: could not retrieve the release manifest from $base_url; existing installed files were left unchanged." >&2
       for t in $targets; do
-        append_target_result "$t" "failed" "" "" "RELEASE_MANIFEST_UNAVAILABLE"
+        append_target_result "$t" "failed" "" "" "NETWORK_ERROR"
       done
       ;;
   esac

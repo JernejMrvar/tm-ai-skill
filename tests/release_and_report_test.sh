@@ -224,7 +224,7 @@ manifest_unavailable_observation="$(
     printf '%s|%s' "$(compute_exit_code)" "$(jq -r '.failureCode' "$manifest_unavailable_output")"
   )
 )"
-assert_eq "1|RELEASE_MANIFEST_UNAVAILABLE" "$manifest_unavailable_observation" \
+assert_eq "1|NETWORK_ERROR" "$manifest_unavailable_observation" \
   "an unavailable manifest fails the installation"
 assert_file_missing "$manifest_unavailable_legacy" \
   "an unavailable manifest never triggers the legacy fallback"
@@ -242,7 +242,7 @@ manifest_invalid_observation="$(
     printf '%s|%s' "$(compute_exit_code)" "$(jq -r '.failureCode' "$manifest_invalid_output")"
   )
 )"
-assert_eq "1|INVALID_RELEASE_MANIFEST" "$manifest_invalid_observation" \
+assert_eq "1|UNKNOWN_ERROR" "$manifest_invalid_observation" \
   "a malformed manifest fails the installation"
 assert_file_missing "$manifest_invalid_legacy" \
   "a malformed manifest never triggers the legacy fallback"
@@ -258,7 +258,7 @@ manifest_incomplete_observation="$(
     printf '%s|%s' "$(compute_exit_code)" "$(jq -r '.failureCode' "$manifest_incomplete_output")"
   )
 )"
-assert_eq "1|INVALID_RELEASE_MANIFEST" "$manifest_incomplete_observation" \
+assert_eq "1|UNKNOWN_ERROR" "$manifest_incomplete_observation" \
   "an incomplete manifest fails the installation"
 assert_file_missing "$manifest_incomplete_legacy" \
   "an incomplete manifest never triggers the legacy fallback"
