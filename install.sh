@@ -1469,3 +1469,462 @@ sync_targets_release() {
 
   rm -rf "$stage_root" 2>/dev/null
 }
+
+# ---------------------------------------------------------------------------
+# Installation reporting (POST /api/v1/skill-installations/report).
+# ---------------------------------------------------------------------------
+
+build_report_body() {
+  local installation_id="$1" sequence="$2" operation="$3" installer_version="$4" \
+    display_name="$5" cred_result="$6" cred_failure_code="$7" targets_json="$8"
+  local cred_json
+
+  if [ "$cred_result" = "failed" ] && [ -n "$cred_failure_code" ]; then
+    cred_json="$(jq -nc --arg r "$cred_result" --arg f "$cred_failure_code" '{result:$r, failureCode:$f}')"
+  else
+    cred_json="$(jq -nc --arg r "$cred_result" '{result:$r}')"
+  fi
+
+  jq -nc \
+    --arg installationId "$installation_id" \
+    --argjson sequence "$sequence" \
+    --arg operation "$operation" \
+    --arg displayName "$display_name" \
+    --arg installerVersion "$installer_version" \
+    --argjson credentialVerification "$cred_json" \
+    --argjson targets "$targets_json" \
+    '{schemaVersion: 1, installationId: $installationId, sequence: $sequence, operation: $operation}
+     + (if $displayName != "" then {displayName: $displayName} else {} end)
+     + {installerVersion: $installerVersion, credentialVerification: $credentialVerification, targets: $targets}'
+}
+
+submit_report() {
+  local base_url="$1" token="$2" body="$3" tmp_body http_code
+  tmp_body="$(mktemp)"
+  http_code="$(curl -sS --max-time 20 -o "$tmp_body" -w '%{http_code}' \
+    -H "Authorization: Bearer $token" -H "Content-Type: application/json" \
+    -X POST --data "$body" \
+    "$base_url/api/v1/skill-installations/report" 2>/dev/null)" || http_code="000"
+  REPORT_HTTP_CODE="$http_code"
+  REPORT_RESPONSE_BODY="$(cat "$tmp_body" 2>/dev/null || true)"
+  rm -f "$tmp_body"
+}
+
+# Interprets the last submit_report() call per the POV-30 idempotency/
+# staleness/conflict contract and updates local pending-report state
+# accordingly. Sets REPORT_DELIVERED=1 only on a validated 200/201 receipt.
+handle_report_outcome() {
+  local state_dir="$1" seq="$2" body="$3" base_url="$4" owner_id="$5" generation="$6"
+  REPORT_DELIVERED=0
+  case "$REPORT_HTTP_CODE" in
+    200|201)
+      if printf '%s' "$REPORT_RESPONSE_BODY" | jq -e '.installationId and .sequence' >/dev/null 2>&1; then
+        clear_pending_report "$state_dir"
+        echo "✓ Reported installation status to $base_url (sequence $seq)."
+        REPORT_DELIVERED=1
+      else
+        save_pending_report "$state_dir" "$seq" "$body" "$base_url" "$owner_id" "$generation"
+        echo "Warning: report response was malformed; will retry later." >&2
+      fi
+      ;;
+    401)
+      echo "Warning: stored credential was rejected (401) while reporting; it may have been rotated or revoked elsewhere. Reconfigure to update it." >&2
+      ;;
+    403)
+      echo "Warning: this deployment rejected the report as requiring a personal key (403); reporting is unavailable for this credential." >&2
+      ;;
+    404)
+      echo "Warning: this installation ID is not recognized for the authenticated owner (404 INSTALLATION_NOT_FOUND); local state may be stale for a different owner. Reporting stopped; run --switch-account to correct the identity before retrying." >&2
+      ;;
+    409)
+      echo "Warning: report conflicted with a previously accepted sequence (409); discarding this attempt so the next run derives a fresh observation." >&2
+      clear_pending_report "$state_dir"
+      ;;
+    413)
+      echo "Warning: report payload was rejected as too large (413); this should not normally happen." >&2
+      clear_pending_report "$state_dir"
+      ;;
+    *)
+      save_pending_report "$state_dir" "$seq" "$body" "$base_url" "$owner_id" "$generation"
+      echo "Note: could not deliver the installation report right now (HTTP ${REPORT_HTTP_CODE:-000}); local work is complete. Run 'install.sh retry-report' later."
+      ;;
+  esac
+}
+
+# Allocates a sequence, builds the report body from the accumulated
+# TARGET_RESULTS_FILE, and attempts delivery. On any failure to deliver, the
+# body+sequence are persisted as a pendingReport for `retry-report` — the
+# sequence is never reallocated on a bare retry of the same observation.
+submit_operation_report() {
+  local operation="$1" base_url="$2" owner_id="$3" generation="$4" cred_result="$5" cred_failure="$6"
+  local state_dir targets_json targets_count seq body token
+  state_dir="$(state_dir_for "$base_url" "$owner_id")"
+  ensure_installation_identity "$state_dir"
+
+  targets_json="$(targets_json_array)"
+  targets_count="$(printf '%s' "$targets_json" | jq 'length')"
+  if [ "$targets_count" = "0" ] && [ "$cred_result" = "not_checked" ]; then
+    echo "Note: nothing to report (no target observations and no credential verification attempt); skipping." >&2
+    return 0
+  fi
+
+  seq="$(allocate_sequence "$state_dir")"
+  body="$(build_report_body "$INSTALLATION_ID" "$seq" "$operation" "$TM_INSTALLER_VERSION" "$OPT_DISPLAY_NAME" "$cred_result" "$cred_failure" "$targets_json")"
+  save_retry_identity "$state_dir" "$base_url" "$owner_id" "$generation"
+
+  token="$(read_config_token_no_prompt "$base_url")"
+  if [ -z "$token" ]; then
+    save_pending_report "$state_dir" "$seq" "$body" "$base_url" "$owner_id" "$generation"
+    echo "Local work complete. Reporting deferred: credential unavailable for the report request. Run 'install.sh retry-report' once resolved."
+    REPORT_DELIVERED=0
+    return 0
+  fi
+
+  submit_report "$base_url" "$token" "$body"
+  handle_report_outcome "$state_dir" "$seq" "$body" "$base_url" "$owner_id" "$generation"
+}
+
+# ---------------------------------------------------------------------------
+# Console summary and exit code.
+#
+# Exit contract: 0 = all requested local work succeeded (reporting may be
+# pending, clearly stated); 1 = validation/local failure or partial local
+# failure; 2 = usage/unsupported platform/dependency. `retry-report` exits
+# nonzero whenever delivery remains pending after the attempt.
+# ---------------------------------------------------------------------------
+
+print_summary_generic() {
+  local op="$1"
+  echo ""
+  echo "== $op summary =="
+  if [ -n "$TARGET_RESULTS_FILE" ] && [ -s "$TARGET_RESULTS_FILE" ]; then
+    jq -r '.target + ": " + .result + (if .observedVersion then " (" + .observedVersion + ")" elif .attemptedVersion then " (attempted " + .attemptedVersion + ")" else "" end) + (if .failureCode then " [" + .failureCode + "]" else "" end)' "$TARGET_RESULTS_FILE"
+  fi
+  echo ""
+  echo "Restart Codex, Cursor, or Claude Code to pick up any installed changes."
+}
+
+compute_exit_code() {
+  if [ -n "$TARGET_RESULTS_FILE" ] && [ -s "$TARGET_RESULTS_FILE" ] && \
+     jq -e 'map(select(.result=="failed")) | length > 0' "$TARGET_RESULTS_FILE" >/dev/null 2>&1; then
+    echo 1
+    return
+  fi
+  echo 0
+}
+
+# ---------------------------------------------------------------------------
+# Modes.
+# ---------------------------------------------------------------------------
+
+# install/reconfigure: the only modes that ever create, prompt for, or
+# rotate a credential. Both converge here — reconfigure just always intends
+# to actively (re)confirm the credential rather than silently reuse it.
+run_configure_and_install() {
+  local mode="$1"
+  ensure_dependencies
+  detect_platform >/dev/null
+  ensure_supported_platform
+
+  local base_url
+  base_url="$(resolve_base_url_opt)"
+  if ! validate_deployment_url "$base_url"; then
+    echo "Error: '$base_url' is not a valid TestManagement deployment URL." >&2
+    exit 2
+  fi
+  base_url="$(canonicalize_deployment_url "$base_url")"
+  credential_target "$base_url" >/dev/null
+
+  local candidate_token
+  candidate_token="$(acquire_candidate_token "$base_url")" || exit 1
+
+  # Validate identity/reachability BEFORE ever replacing the stored secret —
+  # a bad candidate must never overwrite a working credential or config.
+  if ! validate_candidate_credential "$base_url" "$candidate_token"; then
+    echo "Error: could not validate the supplied token against $base_url/api/v1/me. No changes were made." >&2
+    exit 1
+  fi
+
+  local new_identity existing_identity
+  new_identity="$(candidate_identity_string)"
+  existing_identity="$(existing_identity_for_deployment "$base_url")"
+  if [ -n "$existing_identity" ] && [ "$existing_identity" != "$new_identity" ] && [ "$OPT_SWITCH_ACCOUNT" != "1" ]; then
+    if ! confirm_account_switch_interactive; then
+      echo "Aborted: a different account is already configured for $base_url. Pass --switch-account to replace it." >&2
+      exit 1
+    fi
+  fi
+
+  if ! store_secret "$base_url" "$candidate_token"; then
+    echo "Error: failed to store the credential in ${TM_SECRET_BACKEND_VALUE:-the OS credential store}." >&2
+    exit 1
+  fi
+  echo "✓ Stored TM_TOKEN in $TM_SECRET_BACKEND_VALUE"
+  record_identity_for_deployment "$base_url" "$new_identity"
+
+  backup_existing_config "$CONFIG_FILE"
+  write_config "$CONFIG_FILE" "$base_url"
+
+  TARGET_RESULTS_FILE="$(mktemp)"
+  local targets local_state_dir release_json
+  targets="$(resolve_target_list)"
+  local_state_dir="$(local_version_state_dir "$base_url")"
+  release_json="$(fetch_release_manifest "$base_url" 2>/dev/null || true)"
+
+  if [ -n "$release_json" ] && validate_release "$release_json" && [ "$RELEASE_PRESENT" = "1" ] && [ "$RELEASE_COMPATIBLE" = "1" ]; then
+    sync_targets_release "$mode" "$targets" "$local_state_dir"
+  else
+    echo "Note: no promoted, compatible release is currently available from $base_url; installing the latest development skill docs (version tracking is unavailable until a release is promoted)."
+    sync_targets_legacy "$targets"
+  fi
+
+  local cred_verification_result="not_checked" cred_verification_failure=""
+  if [ "$CRED_KIND" = "personal" ]; then
+    do_credential_verification "$base_url" "$CRED_OWNER_ID"
+    cred_verification_result="$VERIFY_RESULT"
+    cred_verification_failure="$VERIFY_FAILURE_CODE"
+    if [ "$cred_verification_result" = "verified" ]; then
+      echo "✓ Verified stored credential via a fresh read-back against $base_url/api/v1/me"
+    else
+      echo "Warning: credential verification did not succeed (${cred_verification_failure:-unknown})." >&2
+    fi
+    submit_operation_report "$mode" "$base_url" "$CRED_OWNER_ID" "$CRED_GENERATION" "$cred_verification_result" "$cred_verification_failure"
+  else
+    echo "Note: legacy tm_ tokens cannot self-report installation status to TestManagement Settings."
+  fi
+
+  print_summary_generic "$mode"
+  exit "$(compute_exit_code)"
+}
+
+# update/check/retry-report never create, rotate, revoke, or prompt for a
+# credential — they only ever read whatever is already configured.
+mode_update() {
+  ensure_dependencies
+  detect_platform >/dev/null
+  ensure_supported_platform
+
+  local base_url
+  base_url="$(resolve_base_url_opt)"
+  if ! validate_deployment_url "$base_url"; then
+    echo "Error: '$base_url' is not a valid TestManagement deployment URL." >&2
+    exit 2
+  fi
+  base_url="$(canonicalize_deployment_url "$base_url")"
+
+  TARGET_RESULTS_FILE="$(mktemp)"
+  local targets local_state_dir release_json token cred_ok=0 t
+  targets="$(resolve_target_list)"
+  local_state_dir="$(local_version_state_dir "$base_url")"
+  release_json="$(fetch_release_manifest "$base_url" 2>/dev/null || true)"
+  token="$(read_config_token_no_prompt "$base_url")"
+  if [ -n "$token" ] && validate_candidate_credential "$base_url" "$token"; then
+    cred_ok=1
+  fi
+
+  if [ -n "$release_json" ] && validate_release "$release_json" && [ "$RELEASE_PRESENT" = "1" ]; then
+    if [ "$RELEASE_COMPATIBLE" != "1" ]; then
+      echo "Warning: the promoted release is incompatible with this deployment's supported API surface; no target was updated." >&2
+      for t in $targets; do append_target_result "$t" "skipped" "" "" ""; done
+    else
+      sync_targets_release "update" "$targets" "$local_state_dir"
+    fi
+  else
+    echo "No promoted release is currently available; existing installed files are unchanged."
+    for t in $targets; do append_target_result "$t" "skipped" "" "" ""; done
+  fi
+
+  local cred_verification_result="not_checked" cred_verification_failure=""
+  if [ "$cred_ok" = "1" ] && [ "$CRED_KIND" = "personal" ]; then
+    do_credential_verification "$base_url" "$CRED_OWNER_ID"
+    cred_verification_result="$VERIFY_RESULT"
+    cred_verification_failure="$VERIFY_FAILURE_CODE"
+    submit_operation_report "update" "$base_url" "$CRED_OWNER_ID" "$CRED_GENERATION" "$cred_verification_result" "$cred_verification_failure"
+  elif [ "$cred_ok" = "1" ]; then
+    echo "Note: legacy tm_ tokens cannot self-report installation status."
+  else
+    echo "Note: no valid credential available; local files were still checked/updated, but installation status was not reported."
+  fi
+
+  print_summary_generic "update"
+  exit "$(compute_exit_code)"
+}
+
+mode_check() {
+  ensure_dependencies
+  local base_url
+  base_url="$(resolve_base_url_opt)"
+  if ! validate_deployment_url "$base_url"; then
+    echo "Error: '$base_url' is not a valid TestManagement deployment URL." >&2
+    exit 2
+  fi
+  base_url="$(canonicalize_deployment_url "$base_url")"
+
+  local local_state_dir
+  local_state_dir="$(local_version_state_dir "$base_url")"
+
+  TARGET_RESULTS_FILE="$(mktemp)"
+  local t content_path recorded_version recorded_digest current_digest
+  for t in $(resolve_target_list); do
+    content_path="$(target_content_path "$t")"
+    if [ -f "$content_path" ]; then
+      recorded_version="$(state_target_field "$local_state_dir" "$t" version)"
+      recorded_digest="$(state_target_field "$local_state_dir" "$t" sha256)"
+      current_digest="$(sha256_file "$content_path" 2>/dev/null || echo "")"
+      if [ -n "$recorded_version" ] && [ "$current_digest" = "$recorded_digest" ]; then
+        append_target_result "$t" "success" "$recorded_version" "" ""
+      else
+        append_target_result "$t" "success" "" "" ""
+      fi
+    else
+      append_target_result "$t" "failed" "" "" ""
+    fi
+  done
+
+  local token cred_ok=0
+  token="$(read_config_token_no_prompt "$base_url")"
+  if [ -n "$token" ] && validate_candidate_credential "$base_url" "$token"; then
+    cred_ok=1
+  fi
+
+  local cred_verification_result="not_checked" cred_verification_failure=""
+  if [ "$cred_ok" = "1" ] && [ "$CRED_KIND" = "personal" ]; then
+    do_credential_verification "$base_url" "$CRED_OWNER_ID"
+    cred_verification_result="$VERIFY_RESULT"
+    cred_verification_failure="$VERIFY_FAILURE_CODE"
+    submit_operation_report "check" "$base_url" "$CRED_OWNER_ID" "$CRED_GENERATION" "$cred_verification_result" "$cred_verification_failure"
+  elif [ "$cred_ok" = "1" ]; then
+    echo "Note: legacy tm_ tokens cannot self-report installation status."
+  else
+    echo "Note: no valid credential available to report installation status."
+  fi
+
+  print_summary_generic "check"
+  exit "$(compute_exit_code)"
+}
+
+# Resends a previously undelivered report unchanged, or — if the stored
+# credential's generation has since rotated — discards the stale claim and
+# submits a fresh observation instead of replaying it under a new identity.
+mode_retry_report() {
+  ensure_dependencies
+  local base_url
+  base_url="$(resolve_base_url_opt)"
+  if ! validate_deployment_url "$base_url"; then
+    echo "Error: '$base_url' is not a valid TestManagement deployment URL." >&2
+    exit 2
+  fi
+  base_url="$(canonicalize_deployment_url "$base_url")"
+
+  local token
+  token="$(read_config_token_no_prompt "$base_url")"
+  if [ -z "$token" ]; then
+    echo "Error: no credential available to retry reporting." >&2
+    exit 1
+  fi
+  if ! validate_candidate_credential "$base_url" "$token"; then
+    echo "Error: stored credential no longer validates against $base_url/api/v1/me." >&2
+    exit 1
+  fi
+  if [ "$CRED_KIND" != "personal" ]; then
+    echo "Legacy tm_ tokens cannot report installation status; nothing to retry."
+    exit 0
+  fi
+
+  local state_dir pending
+  state_dir="$(state_dir_for "$base_url" "$CRED_OWNER_ID")"
+  pending="$(state_read "$state_dir" | jq -c '.pendingReport // empty' 2>/dev/null)"
+  if [ -z "$pending" ] || [ "$pending" = "null" ]; then
+    echo "Nothing pending to report."
+    exit 0
+  fi
+
+  local p_deployment p_owner p_generation p_seq p_body
+  p_deployment="$(printf '%s' "$pending" | jq -r '.retryIdentity.deploymentUrl')"
+  p_owner="$(printf '%s' "$pending" | jq -r '.retryIdentity.ownerId')"
+  p_generation="$(printf '%s' "$pending" | jq -r '.retryIdentity.generation')"
+  p_seq="$(printf '%s' "$pending" | jq -r '.sequence')"
+  p_body="$(printf '%s' "$pending" | jq -c '.body')"
+
+  if [ "$p_deployment" != "$base_url" ] || [ "$p_owner" != "$CRED_OWNER_ID" ]; then
+    echo "The currently configured credential belongs to a different deployment/owner than the pending report. Not replaying it; switch back to the original account to deliver it, or reconfigure to abandon it." >&2
+    exit 1
+  fi
+
+  if [ "$p_generation" != "$CRED_GENERATION" ]; then
+    echo "The stored credential has rotated since this report was queued; discarding the stale attempt and submitting a fresh observation instead."
+    clear_pending_report "$state_dir"
+    do_credential_verification "$base_url" "$CRED_OWNER_ID"
+    TARGET_RESULTS_FILE="$(mktemp)"
+    submit_operation_report "check" "$base_url" "$CRED_OWNER_ID" "$CRED_GENERATION" "$VERIFY_RESULT" "$VERIFY_FAILURE_CODE"
+    if [ "$REPORT_DELIVERED" = "1" ]; then exit 0; else exit 1; fi
+  fi
+
+  submit_report "$base_url" "$token" "$p_body"
+  handle_report_outcome "$state_dir" "$p_seq" "$p_body" "$base_url" "$CRED_OWNER_ID" "$CRED_GENERATION"
+  if [ "$REPORT_DELIVERED" = "1" ]; then
+    exit 0
+  else
+    exit 1
+  fi
+}
+
+# ---------------------------------------------------------------------------
+# Argument parsing and entry point.
+# ---------------------------------------------------------------------------
+
+parse_args() {
+  local arg
+  MODE="install"
+  if [ "$#" -gt 0 ]; then
+    case "$1" in
+      install|reconfigure|update|check|retry-report)
+        MODE="$1"
+        shift
+        ;;
+      -h|--help)
+        print_usage
+        exit 0
+        ;;
+    esac
+  fi
+  for arg in "$@"; do
+    case "$arg" in
+      --base-url=*) OPT_BASE_URL="${arg#--base-url=}" ;;
+      --display-name=*) OPT_DISPLAY_NAME="${arg#--display-name=}" ;;
+      --switch-account) OPT_SWITCH_ACCOUNT=1 ;;
+      --target=*) OPT_TARGETS="${arg#--target=}" ;;
+      --yes) OPT_YES=1 ;;
+      -h|--help) print_usage; exit 0 ;;
+      --token*|-t)
+        echo "Error: the token cannot be passed as a command-line argument (it would be visible in process listings)." >&2
+        echo "Pipe it via stdin, or run interactively for a secure /dev/tty prompt." >&2
+        exit 2
+        ;;
+      *)
+        echo "Error: unknown option '$arg'" >&2
+        print_usage >&2
+        exit 2
+        ;;
+    esac
+  done
+}
+
+main() {
+  parse_args "$@"
+  case "$MODE" in
+    install) run_configure_and_install "install" ;;
+    reconfigure) run_configure_and_install "reconfigure" ;;
+    update) mode_update ;;
+    check) mode_check ;;
+    retry-report) mode_retry_report ;;
+    *)
+      echo "Error: unknown mode '$MODE'" >&2
+      exit 2
+      ;;
+  esac
+}
+
+if [ "$TM_INSTALL_TEST_MODE" != "1" ]; then
+  main "$@"
+fi
