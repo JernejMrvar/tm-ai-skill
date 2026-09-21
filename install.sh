@@ -57,6 +57,7 @@ CRED_TOKEN_NAME=""
 VERIFY_RESULT=""
 VERIFY_FAILURE_CODE=""
 VERIFY_GENERATION=""
+VERIFY_TOKEN=""
 
 RELEASE_JSON=""
 RELEASE_PRESENT=0
@@ -957,7 +958,7 @@ response="$(curl -fsS --max-time 15 -H "Authorization: Bearer $TM_TOKEN" "$TM_RE
   echo '{"reason":"request_failed"}'
   exit 0
 }
-printf '%s' "$response"
+printf '%s' "$response" | jq --arg tok "$TM_TOKEN" '. + {_readbackToken: $tok}'
 SCRIPT
   output="$(env -u TM_TOKEN -u TM_INSTALL_PROMPT_TOKEN TM_READBACK_CONFIG_FILE="$config_file" TM_READBACK_BASE_URL="$base_url" bash "$tmp_script" 2>/dev/null || echo '{"reason":"request_failed"}')"
   rm -f "$tmp_script"
@@ -969,6 +970,7 @@ do_credential_verification() {
   VERIFY_RESULT="failed"
   VERIFY_FAILURE_CODE="CREDENTIAL_VALIDATION_FAILED"
   VERIFY_GENERATION=""
+  VERIFY_TOKEN=""
 
   local raw kind
   raw="$(readback_me "$base_url" "$CONFIG_FILE")"
@@ -995,6 +997,7 @@ do_credential_verification() {
   VERIFY_RESULT="verified"
   VERIFY_FAILURE_CODE=""
   VERIFY_GENERATION="$gen"
+  VERIFY_TOKEN="$(printf '%s' "$raw" | jq -r '._readbackToken // empty')"
 }
 
 # ---------------------------------------------------------------------------
@@ -1150,10 +1153,11 @@ save_pending_report() {
 }
 
 clear_pending_report() {
-  local dir="$1" json
+  local dir="$1" seq="$2" json
   state_lock_acquire "$dir" || return 1
   json="$(state_read "$dir")"
-  json="$(printf '%s' "$json" | jq '.pendingReport = null')"
+  json="$(printf '%s' "$json" | jq --argjson seq "$seq" \
+    'if (.pendingReport == null) or (.pendingReport.sequence <= $seq) then .pendingReport = null else . end')"
   state_write "$dir" "$json"
   state_lock_release
 }
@@ -1672,7 +1676,7 @@ handle_report_outcome() {
   case "$REPORT_HTTP_CODE" in
     200|201)
       if printf '%s' "$REPORT_RESPONSE_BODY" | jq -e '.installationId and .sequence' >/dev/null 2>&1; then
-        clear_pending_report "$state_dir"
+        clear_pending_report "$state_dir" "$seq"
         echo "✓ Reported installation status to $base_url (sequence $seq)."
         REPORT_DELIVERED=1
       else
@@ -1691,11 +1695,11 @@ handle_report_outcome() {
       ;;
     409)
       echo "Warning: report conflicted with a previously accepted sequence (409); discarding this attempt so the next run derives a fresh observation." >&2
-      clear_pending_report "$state_dir"
+      clear_pending_report "$state_dir" "$seq"
       ;;
     413)
       echo "Warning: report payload was rejected as too large (413); this should not normally happen." >&2
-      clear_pending_report "$state_dir"
+      clear_pending_report "$state_dir" "$seq"
       ;;
     *)
       save_pending_report "$state_dir" "$seq" "$body" "$base_url" "$owner_id" "$generation"
@@ -1709,7 +1713,7 @@ handle_report_outcome() {
 # body+sequence are persisted as a pendingReport for `retry-report` — the
 # sequence is never reallocated on a bare retry of the same observation.
 submit_operation_report() {
-  local operation="$1" base_url="$2" owner_id="$3" generation="$4" cred_result="$5" cred_failure="$6"
+  local operation="$1" base_url="$2" owner_id="$3" generation="$4" cred_result="$5" cred_failure="$6" verified_token="${7:-}"
   local state_dir targets_json targets_count seq body token
   state_dir="$(state_dir_for "$base_url" "$owner_id")"
   ensure_installation_identity "$state_dir"
@@ -1725,7 +1729,15 @@ submit_operation_report() {
   body="$(build_report_body "$INSTALLATION_ID" "$seq" "$operation" "$TM_INSTALLER_VERSION" "$OPT_DISPLAY_NAME" "$cred_result" "$cred_failure" "$targets_json")"
   save_retry_identity "$state_dir" "$base_url" "$owner_id" "$generation"
 
-  token="$(read_config_token_no_prompt "$base_url")"
+  if [ -n "$verified_token" ]; then
+    # Use the exact credential just validated by the fresh-process
+    # read-back, not a second independent read — a concurrent rotation
+    # between the two reads must not let the report claim "verified" for
+    # a different credential than the one it authenticates with.
+    token="$verified_token"
+  else
+    token="$(read_config_token_no_prompt "$base_url")"
+  fi
   if [ -z "$token" ]; then
     save_pending_report "$state_dir" "$seq" "$body" "$base_url" "$owner_id" "$generation"
     echo "Local work complete. Reporting deferred: credential unavailable for the report request. Run 'install.sh retry-report' once resolved."
@@ -1758,6 +1770,11 @@ print_summary_generic() {
 }
 
 compute_exit_code() {
+  local cred_failed="${1:-0}"
+  if [ "$cred_failed" = "1" ]; then
+    echo 1
+    return
+  fi
   if [ -n "$TARGET_RESULTS_FILE" ] && [ -s "$TARGET_RESULTS_FILE" ] && \
      jq -s -e 'map(select(.result=="failed")) | length > 0' "$TARGET_RESULTS_FILE" >/dev/null 2>&1; then
     echo 1
@@ -1832,7 +1849,7 @@ run_configure_and_install() {
     sync_targets_from_manifest "$mode" "$targets" "$local_state_dir" "$base_url"
   fi
 
-  local cred_verification_result="not_checked" cred_verification_failure=""
+  local cred_verification_result="not_checked" cred_verification_failure="" cred_failed=0
   if [ "$CRED_KIND" = "personal" ]; then
     do_credential_verification "$base_url" "$CRED_OWNER_ID"
     cred_verification_result="$VERIFY_RESULT"
@@ -1841,14 +1858,15 @@ run_configure_and_install() {
       echo "✓ Verified stored credential via a fresh read-back against $base_url/api/v1/me"
     else
       echo "Warning: credential verification did not succeed (${cred_verification_failure:-unknown})." >&2
+      cred_failed=1
     fi
-    submit_operation_report "$mode" "$base_url" "$CRED_OWNER_ID" "$CRED_GENERATION" "$cred_verification_result" "$cred_verification_failure"
+    submit_operation_report "$mode" "$base_url" "$CRED_OWNER_ID" "$CRED_GENERATION" "$cred_verification_result" "$cred_verification_failure" "$VERIFY_TOKEN"
   else
     echo "Note: legacy tm_ tokens cannot self-report installation status to TestManagement Settings."
   fi
 
   print_summary_generic "$mode"
-  exit "$(compute_exit_code)"
+  exit "$(compute_exit_code "$cred_failed")"
 }
 
 # update/check/retry-report never create, rotate, revoke, or prompt for a
@@ -1893,7 +1911,7 @@ mode_update() {
     do_credential_verification "$base_url" "$CRED_OWNER_ID"
     cred_verification_result="$VERIFY_RESULT"
     cred_verification_failure="$VERIFY_FAILURE_CODE"
-    submit_operation_report "update" "$base_url" "$CRED_OWNER_ID" "$CRED_GENERATION" "$cred_verification_result" "$cred_verification_failure"
+    submit_operation_report "update" "$base_url" "$CRED_OWNER_ID" "$CRED_GENERATION" "$cred_verification_result" "$cred_verification_failure" "$VERIFY_TOKEN"
   elif [ "$cred_ok" = "1" ]; then
     echo "Note: legacy tm_ tokens cannot self-report installation status."
   else
@@ -1946,7 +1964,7 @@ mode_check() {
     do_credential_verification "$base_url" "$CRED_OWNER_ID"
     cred_verification_result="$VERIFY_RESULT"
     cred_verification_failure="$VERIFY_FAILURE_CODE"
-    submit_operation_report "check" "$base_url" "$CRED_OWNER_ID" "$CRED_GENERATION" "$cred_verification_result" "$cred_verification_failure"
+    submit_operation_report "check" "$base_url" "$CRED_OWNER_ID" "$CRED_GENERATION" "$cred_verification_result" "$cred_verification_failure" "$VERIFY_TOKEN"
   elif [ "$cred_ok" = "1" ]; then
     echo "Note: legacy tm_ tokens cannot self-report installation status."
   else
@@ -2007,10 +2025,10 @@ mode_retry_report() {
 
   if [ "$p_generation" != "$CRED_GENERATION" ]; then
     echo "The stored credential has rotated since this report was queued; discarding the stale attempt and submitting a fresh observation instead."
-    clear_pending_report "$state_dir"
+    clear_pending_report "$state_dir" "$p_seq"
     do_credential_verification "$base_url" "$CRED_OWNER_ID"
     TARGET_RESULTS_FILE="$(mktemp)"
-    submit_operation_report "check" "$base_url" "$CRED_OWNER_ID" "$CRED_GENERATION" "$VERIFY_RESULT" "$VERIFY_FAILURE_CODE"
+    submit_operation_report "check" "$base_url" "$CRED_OWNER_ID" "$CRED_GENERATION" "$VERIFY_RESULT" "$VERIFY_FAILURE_CODE" "$VERIFY_TOKEN"
     if [ "$REPORT_DELIVERED" = "1" ]; then exit 0; else exit 1; fi
   fi
 
