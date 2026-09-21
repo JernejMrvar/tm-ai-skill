@@ -226,6 +226,15 @@ assert_eq "1" "$(validate_deployment_url https://user@example.com; echo $?)" "va
 assert_eq "1" "$(validate_deployment_url 'https://example.com/a?x=1'; echo $?)" "validate_deployment_url rejects a query string"
 assert_eq "https://example.com" "$(canonicalize_deployment_url 'HTTPS://Example.COM:443/')" "canonicalize_deployment_url lowercases and strips the default port/trailing slash"
 
+# Bracketed IPv6 loopback (::1) must be accepted the same way TestManagementProject's
+# canonicalizeDeploymentUrl accepts it — a URL Settings offers to the user must
+# never fail this installer's own validation.
+assert_eq "0" "$(validate_deployment_url 'http://[::1]:3000'; echo $?)" "validate_deployment_url accepts IPv6 loopback http with a port"
+assert_eq "0" "$(validate_deployment_url 'http://[::1]'; echo $?)" "validate_deployment_url accepts IPv6 loopback http without a port"
+assert_eq "1" "$(validate_deployment_url 'http://[::2]:3000'; echo $?)" "validate_deployment_url rejects a non-loopback IPv6 http host"
+assert_eq "http://[::1]" "$(canonicalize_deployment_url 'HTTP://[::1]:80/')" "canonicalize_deployment_url lowercases and strips the default port for IPv6 loopback"
+assert_eq "http://[::1]:3000" "$(canonicalize_deployment_url 'http://[::1]:3000')" "canonicalize_deployment_url preserves a non-default port for IPv6 loopback"
+
 # --- Immutable artifact URL check -------------------------------------------
 
 assert_eq "0" "$(is_immutable_https_url https://github.com/x/y/releases/download/v1/a.tar.gz; echo $?)" "is_immutable_https_url accepts a pinned release asset URL"

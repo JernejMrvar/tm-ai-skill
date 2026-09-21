@@ -245,7 +245,9 @@ is_immutable_https_url() {
   return 0
 }
 
-# HTTPS in normal use; explicitly supported loopback HTTP for local dev.
+# HTTPS in normal use; explicitly supported loopback HTTP for local dev
+# (localhost, 127.0.0.1, and bracketed IPv6 ::1 — matching TestManagementProject's
+# canonicalizeDeploymentUrl so a URL it accepts never fails validation here).
 # Rejects userinfo, query, fragment, and control characters.
 validate_deployment_url() {
   local url="$1"
@@ -264,7 +266,7 @@ validate_deployment_url() {
   case "$url" in
     http://*)
       case "$authority" in
-        localhost|localhost:*|127.0.0.1|127.0.0.1:*) : ;;
+        localhost|localhost:*|127.0.0.1|127.0.0.1:*|"[::1]"|"[::1]:"*) : ;;
         *) return 1 ;;
       esac
       ;;
