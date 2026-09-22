@@ -105,6 +105,26 @@ The AI will source your config automatically before making any API calls.
 
 ---
 
+## Server contract for versioned releases (not yet used by this installer)
+
+`TestManagementProject` (POV-30) added a server-side contract this
+installer doesn't call yet — installer integration is a separate,
+not-yet-implemented piece of work (POV-31):
+
+- `GET /api/v1/skill-release` — a public, credential-free endpoint serving
+  the deployment's promoted release manifest (version, per-target payload
+  versions, and immutable artifact URLs/checksums), or an explicit "no
+  release promoted" state.
+- `POST /api/v1/skill-installations/report` — a personal-API-key-only
+  endpoint for self-reporting install/update/check observations per
+  installation, so a TestManagement account's Settings page can show which
+  of its own devices are up to date.
+
+See `TestManagementProject`'s `docs/POV-30-skill-releases-installations.md`
+for the full contract. This repo's own release process — packaging and
+publishing what *does* exist today (`install.sh` + `SKILL.md`) — is
+documented in [`RELEASING.md`](RELEASING.md).
+
 ## Skill reference
 
 See [`SKILL.md`](SKILL.md) for the full API reference with curl examples.
