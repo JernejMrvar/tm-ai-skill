@@ -102,7 +102,43 @@ PATH="$fake_bin:$PATH"
 PLATFORM="macos"
 CONFIG_FILE="$config"
 
-printf 'export TM_TOKEN="$(security find-generic-password -s "$TM_CREDENTIAL_SERVICE" -a "$TM_CREDENTIAL_ACCOUNT" -w 2>/dev/null || true)"\n' > "$config"
+assert_eq "0" "$(configured_deployment_matches "https://EXAMPLE.TEST"; echo $?)" \
+  "configured deployment comparison accepts canonical URL variants"
+assert_eq "1" "$(configured_deployment_matches "https://another.example"; echo $?)" \
+  "configured deployment comparison rejects a different deployment"
+assert_eq "" "$(read_config_token_no_prompt "https://another.example")" \
+  "token lookup returns no credential for a base-url override"
+assert_eq "tm_old_literal#secret" "$(read_config_token_no_prompt "https://example.test")" \
+  "token lookup reads the credential only for its configured deployment"
+
+# A script piped directly to bash has no source directory and its stdin is
+# already the script stream. It must fall through to the normal /dev/tty
+# prompt path instead of interpreting that stream/EOF as a token.
+installer_self_dir="$TM_INSTALLER_SELF_DIR"
+installer_source="$TM_INSTALLER_SOURCE"
+installer_execution_mode="$TM_INSTALLER_EXECUTION_MODE"
+CONFIG_FILE="$TMP_DIR/no-config"
+PLATFORM="unsupported"
+prompt_required_token() { printf 'tmp_prompted_token\n'; }
+TM_INSTALLER_SOURCE=""
+TM_INSTALLER_EXECUTION_MODE="0"
+TM_INSTALLER_SELF_DIR=""
+assert_eq "tmp_prompted_token" "$(acquire_candidate_token "https://example.test" < /dev/null)" \
+  "stdin-script execution falls back to the secure prompt"
+TM_INSTALLER_EXECUTION_MODE="1"
+assert_eq "tmp_piped_token" "$(printf 'tmp_piped_token\n' | acquire_candidate_token "https://example.test")" \
+  "a -c script still accepts a token piped on stdin"
+TM_INSTALLER_EXECUTION_MODE="$installer_execution_mode"
+TM_INSTALLER_SOURCE="$installer_source"
+TM_INSTALLER_SELF_DIR="$installer_self_dir"
+CONFIG_FILE="$config"
+PLATFORM="macos"
+unset -f prompt_required_token
+
+{
+  printf 'export TM_BASE_URL="https://example.test"\n'
+  printf 'export TM_TOKEN="$(security find-generic-password -s "$TM_CREDENTIAL_SERVICE" -a "$TM_CREDENTIAL_ACCOUNT" -w 2>/dev/null || true)"\n'
+} > "$config"
 TM_INSTALL_PROMPT_TOKEN=""
 assert_eq "tm_stored_token" "$(resolve_token "https://example.test")" "blank prompt input reuses stored credential"
 
@@ -118,7 +154,10 @@ fi
 assert_text_contains "unavailable to confirm whether to reuse or replace it" "$output" "stored credential without tty fails clearly"
 TM_INSTALL_TTY_PATH="/dev/tty"
 
-printf 'export TM_TOKEN=tm_plaintext_token\n' > "$config"
+{
+  printf 'export TM_BASE_URL="https://example.test"\n'
+  printf 'export TM_TOKEN=tm_plaintext_token\n'
+} > "$config"
 assert_eq "tm_plaintext_token" "$(resolve_token "https://example.test")" "plaintext token overrides stored credential for migration"
 PATH="$original_path"
 
@@ -157,5 +196,70 @@ assert_contains 'TM_CREDENTIAL_TARGET="$TM_CREDENTIAL_TARGET"' "$CONFIG_FILE" "W
 assert_not_contains 'tm_old_literal' "$CONFIG_FILE" "Windows config contains no literal token"
 bash -n "$CONFIG_FILE"
 assert_eq "0" "$?" "Windows generated config is bash-compatible"
+
+# --- SemVer comparison (matching semver.org's canonical precedence chain) --
+
+assert_eq "0" "$(semver_compare 1.0.0 1.0.0)" "semver_compare: equal versions"
+assert_eq "-1" "$(semver_compare 1.0.0 2.0.0)" "semver_compare: lower major"
+assert_eq "1" "$(semver_compare 2.1.1 2.1.0)" "semver_compare: higher patch"
+assert_eq "0" "$(semver_compare 1.0.0+build1 1.0.0+build2)" "semver_compare: build metadata never affects precedence"
+assert_eq "-1" "$(semver_compare 1.0.0-alpha 1.0.0)" "semver_compare: a prerelease is lower than the same release"
+
+# 1.0.0-alpha < 1.0.0-alpha.1 < 1.0.0-alpha.beta < 1.0.0-beta < 1.0.0-beta.2
+#   < 1.0.0-beta.11 < 1.0.0-rc.1 < 1.0.0
+chain=(1.0.0-alpha 1.0.0-alpha.1 1.0.0-alpha.beta 1.0.0-beta 1.0.0-beta.2 1.0.0-beta.11 1.0.0-rc.1 1.0.0)
+chain_len=${#chain[@]}
+for ((i = 0; i < chain_len - 1; i++)); do
+  assert_eq "-1" "$(semver_compare "${chain[$i]}" "${chain[$((i + 1))]}")" \
+    "semver_compare: ${chain[$i]} < ${chain[$((i + 1))]} (SemVer spec chain)"
+done
+
+assert_eq "0" "$(is_stable_semver 1.2.3; echo $?)" "is_stable_semver accepts a plain X.Y.Z"
+assert_eq "1" "$(is_stable_semver 1.2.3-rc.1; echo $?)" "is_stable_semver rejects a prerelease"
+
+# --- Deployment URL validation/canonicalization -----------------------------
+
+assert_eq "0" "$(validate_deployment_url https://example.com; echo $?)" "validate_deployment_url accepts https"
+assert_eq "0" "$(validate_deployment_url http://localhost:3000; echo $?)" "validate_deployment_url accepts loopback http"
+assert_eq "1" "$(validate_deployment_url http://evil.example.com; echo $?)" "validate_deployment_url rejects non-loopback http"
+assert_eq "1" "$(validate_deployment_url https://user@example.com; echo $?)" "validate_deployment_url rejects userinfo"
+assert_eq "1" "$(validate_deployment_url 'https://example.com/a?x=1'; echo $?)" "validate_deployment_url rejects a query string"
+assert_eq "https://example.com" "$(canonicalize_deployment_url 'HTTPS://Example.COM:443/')" "canonicalize_deployment_url lowercases and strips the default port/trailing slash"
+
+# Bracketed IPv6 loopback (::1) must be accepted the same way TestManagementProject's
+# canonicalizeDeploymentUrl accepts it — a URL Settings offers to the user must
+# never fail this installer's own validation.
+assert_eq "0" "$(validate_deployment_url 'http://[::1]:3000'; echo $?)" "validate_deployment_url accepts IPv6 loopback http with a port"
+assert_eq "0" "$(validate_deployment_url 'http://[::1]'; echo $?)" "validate_deployment_url accepts IPv6 loopback http without a port"
+assert_eq "1" "$(validate_deployment_url 'http://[::2]:3000'; echo $?)" "validate_deployment_url rejects a non-loopback IPv6 http host"
+assert_eq "http://[::1]" "$(canonicalize_deployment_url 'HTTP://[::1]:80/')" "canonicalize_deployment_url lowercases and strips the default port for IPv6 loopback"
+assert_eq "http://[::1]:3000" "$(canonicalize_deployment_url 'http://[::1]:3000')" "canonicalize_deployment_url preserves a non-default port for IPv6 loopback"
+
+# --- Immutable artifact URL check -------------------------------------------
+
+assert_eq "0" "$(is_immutable_https_url https://github.com/x/y/releases/download/v1/a.tar.gz; echo $?)" "is_immutable_https_url accepts a pinned release asset URL"
+assert_eq "1" "$(is_immutable_https_url https://github.com/x/y/releases/download/main/a.tar.gz; echo $?)" "is_immutable_https_url rejects a /main/ URL"
+assert_eq "1" "$(is_immutable_https_url http://github.com/x/y/releases/download/v1/a.tar.gz; echo $?)" "is_immutable_https_url rejects a plain http URL"
+
+# --- Installation UUID format ------------------------------------------------
+
+uuid="$(generate_uuid)"
+if [[ "$uuid" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$ ]]; then
+  pass_count=$((pass_count + 1))
+  printf 'ok - generate_uuid produces a lowercase RFC4122 v4 UUID\n'
+else
+  printf 'not ok - generate_uuid produces a lowercase RFC4122 v4 UUID\nactual: %s\n' "$uuid" >&2
+  exit 1
+fi
+
+# TARGET_RESULTS_FILE is newline-delimited JSON, so exit-code aggregation must
+# slurp all observations before applying map().
+TARGET_RESULTS_FILE="$TMP_DIR/target-results"
+printf '%s\n%s\n' \
+  '{"target":"codex","result":"success"}' \
+  '{"target":"claude","result":"failed"}' > "$TARGET_RESULTS_FILE"
+assert_eq "1" "$(compute_exit_code)" "failed target observations produce a failing exit code"
+printf '%s\n' '{"target":"codex","result":"success"}' > "$TARGET_RESULTS_FILE"
+assert_eq "0" "$(compute_exit_code)" "successful target observations produce a zero exit code"
 
 printf '1..%d\n' "$pass_count"

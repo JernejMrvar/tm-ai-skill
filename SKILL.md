@@ -46,6 +46,44 @@ For run mutations, `POST /api/v1/test-runs/{runId}/cases` accepts
 retaining `testCaseId` for compatibility. Resolve or validate references
 against the token-scoped project before mutating.
 
+## Personal API keys and deliberate project selection
+
+A `tmp_...` personal key is not scoped to a single project the way a
+legacy `tm_...` token is. Discover identity and access with
+`GET /api/v1/me` and `GET /api/v1/projects` (no project header on either —
+both are credential-only routes), then send an explicit
+`X-TM-Project-Id: <id>` header on every subsequent project-scoped request,
+even when discovery returns exactly one project. An empty project list or
+Guest/read-only access is a valid discovery result, not an error. Legacy
+`tm_...` tokens keep their existing single implied project and never need
+this header.
+
+- Establish the intended project from explicit user direction in this task,
+  or from an unambiguous selection already established earlier in the same
+  task. A previously saved project preference is only a hint scoped to this
+  deployment and owner — revalidate it against current discovery before
+  reusing it, never treat it alone as authorization for ambiguous work.
+- If more than one project is available and the user's intent is unclear,
+  ask once which project before making any request that would mutate data.
+  Send zero mutations until the project is resolved.
+- Never choose a project by list order, a repository/folder name match, the
+  key's write permission on one candidate, similarity to another resource's
+  name, another task's earlier selection, or a project becoming newly
+  available through changed membership. None of these are user intent.
+  Existing and newly available projects otherwise follow the key's actual
+  permissions; do not invent or reinstate an allowlist beyond that.
+- Bind every operation and lookup to the selected project and name that
+  project in any summary of what was done. Preserve the selection across an
+  authorized continuation of the same task in the same project without
+  re-asking; an explicit switch, or genuinely independent multi-project
+  work, establishes the project for each new target separately.
+- Resolve public, numeric, and nested IDs within the selected project only.
+  Missing access, a read-only/excluded scope, a stale saved selection, a
+  resource that actually belongs to a different project, a contradictory
+  reference, or failed authentication stops the affected operation — do not
+  retry it against a different project, account, or the browser to force a
+  success.
+
 ## Before making any API call
 
 Run the following to load credentials, then check `TM_TOKEN` is set:
@@ -63,9 +101,9 @@ If `TM_TOKEN` is empty after sourcing, report that credential lookup failed. Tel
 ### 1. Generate an API token
 
 1. Open your project in the app
-2. Go to **Project Settings → API Tokens**
-3. Click **New Token**, give it a name (e.g. `ai-local`), select a "Run as" member
-4. Copy the token — it starts with `tm_` and is shown **only once**
+2. Go to **Project Settings → API Tokens** for a legacy, project-scoped token, or your account's personal-key settings for a `tmp_...` key that can span multiple projects
+3. Click **New Token**, give it a name (e.g. `ai-local`), select a "Run as" member (legacy tokens only)
+4. Copy the token — a legacy token starts with `tm_`, a personal key with `tmp_`, and either is shown **only once**
 
 ### 2. Run the installer
 
@@ -73,7 +111,15 @@ If `TM_TOKEN` is empty after sourcing, report that credential lookup failed. Tel
 curl -fsSL https://raw.githubusercontent.com/JernejMrvar/tm-ai-skill/main/install.sh | bash
 ```
 
-The installer supports macOS and Windows Git Bash. It prompts for the `tm_...` token through `/dev/tty`, stores it in the OS credential store, and writes `~/.tm-config` with non-secret exports and lookup logic. If a token is already stored, the installer asks for a replacement token and treats blank input as "reuse the existing token". Do not manually write plaintext `TM_TOKEN` values into `~/.tm-config`.
+The installer supports macOS and Windows Git Bash and requires `jq` in addition to `curl`/`tar`/`shasum`-or-`sha256sum`. It prompts for the token through `/dev/tty` (or reads it from stdin when run non-interactively, e.g. from a generated install command — never as a `--token` argument), stores it in the OS credential store, and writes `~/.tm-config` with non-secret exports and lookup logic. If a token is already stored, the installer asks for a replacement token and treats blank input as "reuse the existing token". Do not manually write plaintext `TM_TOKEN` values into `~/.tm-config`.
+
+Beyond the default interactive install, the installer supports explicit
+modes: `install.sh reconfigure` to deliberately replace the stored
+credential, `install.sh update` to sync skill files against a promoted
+release without ever touching the credential, `install.sh check` to report
+current local state, and `install.sh retry-report` to resend a previously
+undelivered installation report. Only `install`/`reconfigure` ever create,
+prompt for, or rotate a credential.
 
 `~/.tm-config` should define:
 
@@ -544,6 +590,7 @@ Returns `{ "url", "filename", "contentType", "sizeBytes" }` — use `url` in com
 | Problem | Fix |
 |---------|-----|
 | `TM_TOKEN` is empty after sourcing `~/.tm-config` | Credential lookup failed. Rerun the installer and paste a valid token when prompted. |
+| Installer exits with a missing-dependency error | Install `jq` (plus `curl`/`tar`/`shasum` or `sha256sum`, which normally already ship with macOS and Git for Windows) and rerun. |
 | Missing macOS `security` command | Run from a normal macOS terminal where `/usr/bin/security` is available, then rerun the installer. |
 | Windows PowerShell or Credential Manager errors | Run from Windows Git Bash with `powershell.exe` available and Credential Manager enabled. |
 | Windows credential lookup is slow | The generated config starts PowerShell to read Credential Manager; this startup cost is expected. |
